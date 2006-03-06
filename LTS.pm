@@ -13,7 +13,7 @@ use Carp;
 ## Constants
 ##==============================================================================
 
-our $VERSION = 0.01;
+our $VERSION = 0.02;
 
 ##-- always specials
 our @SPECIALS = ('=<epsilon>', '#');
@@ -32,6 +32,7 @@ our %SPECIALS = (map { $_=>undef } @SPECIALS);
 ##     ##
 ##     ##-- derived stuff
 ##     rulex   => \@exanded_rules, ##-- no class names in context components; req: expand_rules()
+##     phones0  => \%phones,      ##-- pseudo-set: phones requested in .lts file
 ##     letters => \%letters,      ##-- pseudo-set: req: expand_alphabet()
 ##     phones  => \%phones,       ##-- pseudo-set: req: expand_alphabet()
 ##     specials => \%specials,    ##-- pseudo-set: req: expand_alphabet()
@@ -50,6 +51,7 @@ sub new {
 		rules=>[],
 		letters=>{},
 		phones=>{},
+		phones0=>{},
 		specials=>{%SPECIALS},
 		apply_verbose=>0,
 		implicit_bos=>1,
@@ -68,9 +70,10 @@ sub new {
 ## $obj = $CLASS_OR_OBJ->load($filename_or_fh)
 ##  + File Syntax:
 ##    LTS_FILE ::= LTS_LINE*
-##    LTS_LINE ::= ( BLANK | COMMENT | CLASS | IGNORE | RULE ) "\n"
+##    LTS_LINE ::= ( BLANK | COMMENT | PHON | CLASS | IGNORE | RULE ) "\n"
 ##    BLANK    ::= (whitespace)
 ##    COMMENT  ::= ";" (anything)
+##    PHON     ::= "phon" PHONSTRINGS
 ##    CLASS    ::= "class" CLASS_NAME CHARS
 ##    CLASS_NAME ::= (string)
 ##    CHARS      ::= ((string) | "#") *
@@ -83,13 +86,18 @@ sub load {
   my $fh = ref($file) ? $file : IO::File->new("<$file");
   croak(__PACKAGE__, "::load(): open failed for '$file': $!") if (!$fh);
 
-  my ($cname,@cchars, $lhs,$in,$rhs,$out);
+  my (@phones,$cname,@cchars, $lhs,$in,$rhs,$out);
   while (<$fh>) {
     chomp;
-    s/\;.*//;          ##-- ignore comments
+    s/[^\\]\;.*//;     ##-- ignore comments
     next if (/^\s*$/); ##-- ... and blank lines
+    s/\\(.)/$1/g;      ##-- un-escape
 
-    if (/^\s*class\s+(\S+)\s+(.*\S)\s*/) {
+    if (/^\s*phon\s+(.*\S)\s*/) {
+      @phones = split(/\s+/,$1);
+      @{$lts->{phones0}}{@phones} = undef;
+    }
+    elsif (/^\s*class\s+(\S+)\s+(.*\S)\s*/) {
       $cname  = $1;
       @cchars = split(/\s+/,$2);
       $lts->{classes}{$cname} = {} if (!defined($lts->{classes}{$cname}));
@@ -290,7 +298,7 @@ sub _att_safe_str {
   my $sym = shift;
   return "[<epsilon>]" if (length($sym)==0);
   return "[$sym]"      if (length($sym) > 1);
-  return ("\\".$sym)   if ($sym =~ /[\#\+\*\-\^]/);
+  return ("\\".$sym)   if ($sym =~ /[\#\+\*\-\^\@\:\[\]]/);
   return $sym;
 }
 
@@ -360,6 +368,9 @@ sub expand_alphabet {
 
   ##-- get letters from classes
   @$letters{map { keys(%$_) } values(%{$lts->{classes}})} = undef;
+
+  ##-- get pre-defined phones
+  @$phones{keys %{$lts->{phones0}}} = undef;
 
   ##-- get letters & phones from rules
   my ($r,$part);
