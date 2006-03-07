@@ -15,11 +15,6 @@ use Lingua::LTS;
 ##   $lts = { classes=>\%classes, rules=>\@rules, ... }
 our $lts = Lingua::LTS->new();
 
-our $input_words = 0;
-our $do_expand = 0;
-our $verbose = 0;
-
-
 ##------------------------------------------------------------------------------
 ## Command-line
 ##------------------------------------------------------------------------------
@@ -27,32 +22,10 @@ GetOptions(##-- General
 	   'help|h' => \$help,
 
 	   ##-- behavior
-	   'words|w!' => \$input_words,
-	   'verbose|v!' => \$lts->{apply_verbose},
 	   'expand|x!'  => \$do_expand,
-
-	   'bos|b!' => \$lts->{implicit_bos},
-	   'eos|e!' => \$lts->{implicit_eos},
 	  );
 
 pod2usage({-exitval=>0, -verbose=>0}) if ($help || !@ARGV);
-
-
-##------------------------------------------------------------------------------
-## Subs
-##------------------------------------------------------------------------------
-
-##--------------------------------------------------------------
-## LTS: application + I/O
-
-## undef = lts_apply_word($lts,$word)
-##  + just prints out
-sub lts_apply_word {
-  my ($lts,$word) = @_;
-  my @phones = $lts->apply_word($word);
-  print $word, "\t", join(' ', @phones), "\n";
-}
-
 
 
 ##------------------------------------------------------------------------------
@@ -61,24 +34,32 @@ sub lts_apply_word {
 
 $lts_file = shift;
 $lts->load($lts_file);
+$lts->expand_alphabet();
+$lts->expand_rules() if ($do_expand);
 
-if ($do_expand) {
-  print STDERR "$0: expanding ", scalar(@{$lts->{rules}}), " rules...\n";
-  $lts->expand_rules();
-  $lts->{rules} = $lts->{rulex};
-  %{$lts->{classes}} = qw(); ##-- HACK
-  print STDERR "$0: generated ", scalar(@{$lts->{rulex}}), " expanded rules.\n";
-}
-
-push(@ARGV,'-') if (!@ARGV);
-if ($input_words) {
-  lts_apply_word($lts,$_) foreach (@ARGV);
-} else {
-  while (<>) {
-    chomp;
-    lts_apply_word($lts,$_);
-  }
-}
+$info = $lts->info();
+$vallen = 2;
+$lablen = 19;
+foreach (values(%$info)) { $vallen = length($_) if (length($_) > $vallen); }
+print STDERR
+  (sprintf("File: %s\n", $lts_file),
+   sprintf(" + Alphabet:\n"),
+   sprintf("   - %-${lablen}s: %${vallen}d\n", "#/Letters", $info->{alph_nLetters}),
+   sprintf("   - %-${lablen}s: %${vallen}d\n", "#/Phones", $info->{alph_nPhones}),
+   sprintf("   - %-${lablen}s: %${vallen}d\n", "#/Specials", $info->{alph_nSpecials}),
+   sprintf("   - %-${lablen}s: %${vallen}d\n", "#/Classes", $info->{alph_nClasses}),
+   sprintf(" + Rules:\n"),
+   sprintf("   - %-${lablen}s: %${vallen}d\n", "#/Rules", $info->{nRules}),
+   sprintf("   - %-${lablen}s: %${vallen}d\n", "#/Expanded Rules", ($do_expand ? $info->{nRulesX} : -1)),
+   map {
+     #sprintf("   - %-${lablen}s: %${vallen}d .. %${vallen}d\n",
+     sprintf("   - %-${lablen}s: %${vallen}d .. %${vallen}d\n",
+	     sprintf("min..max len(%-4s)", uc($_)),
+	     $info->{"rule_min_len_$_"},
+	     $info->{"rule_max_len_$_"},
+	    )
+   } qw(lhs in out rhs ltrs),
+  );
 
 
 __END__
@@ -90,19 +71,15 @@ __END__
 
 =head1 NAME
 
-lts-apply.perl - apply LTS rules
+lts-info.perl - LTS ruleset information
 
 =head1 SYNOPSIS
 
- lts-apply.perl [OPTIONS] LTS_FILE [INPUTS...]
+ lts-info.perl [OPTIONS] LTS_FILE
 
  Options:
   -help
-  -words                 # inputs are words, not filenames
-  -expand               # expand classes before applying rules (SLOW!)
-  -verbose               # trace rule application to STDERR
-  -bos , -nobos          # do/don't implicitly prepend word-initial '#' (default=yes)
-  -eos , -noeos          # do/don't implicitly append  word-final   '#' (default=yes)
+  -expand                # show information on expanded classes
 
 =cut
 

@@ -4,6 +4,7 @@
 
 
 package Lingua::LTS;
+use Lingua::LTS::Automaton;
 use strict;
 
 use IO::File;
@@ -198,7 +199,9 @@ sub print_symbols_lines {
 
 ## undef = $lts->to_csrules($filename_or_fh)
 
-##------ PROBLEM (solved):
+##------ STILL BUGGY!
+
+##------ PROBLEM (solved, old):
 ##ex LTS:
 ##
 ## a [ a ] = B
@@ -223,23 +226,24 @@ sub to_csrules {
   croak(__PACKAGE__, "::to_csrules(): open failed for '$file': $!") if (!$fh);
 
   ##-- print lexrulecomp compiler options
-  $fh->print("simultaneous\n\n");
+  $fh->print("simultaneous\n", "obligatory\n", "\n");
 
   my $rules = $lts->{rules};
-  my ($r);
-  my $i=1;
-  foreach $r (@$rules) {
-    $lts->print_csrule_line_x($fh, @$r{qw(lhs in out rhs)}, "RULE ".($i++).": ", rule2str($r));
-  }
+  my ($r,$ii);
+  my $i = 1;
 
-  ##-- print FINAL special rule (bos/eos)
-#  $fh->print("\n");
-#  $lts->print_csrule_line_x($fh,
-#		      [],['#'],['<epsilon>'],[],
-#		      "DUMMY RULE: eliminate BOS/EOS markers");
-#  $lts->print_csrule_line_x($fh,
-#		      [], ['=<epsilon>'],['<epsilon>'],[],
-#		      "DUMMY RULE: eliminate phonetic silence");
+  foreach $ii (
+	      sort {
+		(@{$rules->[$b]{in}} <=> @{$rules->[$a]{in}}      ##-- length(r->IN), descending
+		 || @{$rules->[$b]{lhs}} <=> @{$rules->[$a]{lhs}} ##-- length(r->LHS), descending
+		 || @{$rules->[$b]{rhs}} <=> @{$rules->[$a]{rhs}} ##-- length(r->RHS), descending
+		 || $a <=> $b)                                    ##-- index(r->INDEX), ascending
+	      } (0..$#$rules)
+	     )
+    {
+      $r = $rules->[$ii];
+      $lts->print_csrule_line_x($fh, @$r{qw(lhs in out rhs)}, "RULE ".($i++)." [$ii]: ".rule2strNS($r));
+    }
 
   $fh->close if (!ref($file));
   return $lts;
@@ -248,14 +252,15 @@ sub to_csrules {
 ## undef = print_csrule_line_x($fh,\@left,\@in,\@out,\@right,@comments)
 sub print_csrule_line_x {
   my ($lts,$fh,$lc,$in,$out,$rc,@comments) = @_;
-  my ($lenPhi,$lenPsi,$lenL,$lenR) = (8,16,12,12);
+  my ($lenPhi,$lenPsi,$lenL,$lenR) = (8,16,16,16);
   $fh->print(
-	     sprintf("%${lenPhi}s -> %-${lenPsi}s / %${lenL}s __ %-${lenR}s  %s\n",
+	     sprintf("%${lenPhi}s -> %-${lenPsi}s / %${lenL}s __ %-${lenR}s %s\n",
+	     #sprintf("%s -> %s / %s __ %s   %s\n",
 		     ##-- input (target: Phi)
-		     join(' ', map { $lts->att_str($_) } @$in),
+		     join('', map { $lts->att_str($_) } @$in),
 
 		     ##-- output (target: Psi)
-		     join(' ',
+		     join('',
 			  ##-- output: history
 			  (map { $lts->att_str($_,'-') } @$in),
 			  ##-- output: phones
@@ -263,14 +268,14 @@ sub print_csrule_line_x {
 			 ),
 
 		     ##-- left context (history)
-		     join(' ',
+		     join('',
 			  map { ($lts->att_str((exists($lts->{classes}{$_}) ? "Class$_" : $_),
 					       '-'), ##-- history
 				 '([Phon]*)')
 			       } @$lc),
 
 		     ##-- right context
-		     join(' ',
+		     join('',
 			  map { ($lts->att_str((exists($lts->{classes}{$_}) ? "Class$_" : $_),
 					       ''), ##-- no history
 				 '([Phon]*)')
@@ -302,6 +307,40 @@ sub _att_safe_str {
   return $sym;
 }
 
+##==============================================================================
+## Methods: index generation
+##==============================================================================
+
+## $automaton = $lts->toAutomaton()
+## $automaton = $lts->toAutomaton($automaton)
+##   + requires: expand_alphabet(), expand_rules()
+sub toAutomaton {
+  my ($lts,$fst) = @_;
+  $fst = Lingua::LTS::Automaton->new() if (!$fst);
+  @$fst{qw(specials letters phones)} = @$lts{qw(specials letters phones)};
+
+  ##-- get all input symbols
+  my @ltrs = ('#', keys(%{$lts->{letters}}));
+
+  ##-- generate automaton: step1: trie
+  my $rulex = $lts->{rulex};
+  #my $qid2dot = {};
+  my $qid;
+  my ($r);
+  foreach $r (@$rulex) {
+    #$qid = $fst->addString(join('', @{$r->{lhs}}, @{$r->{in}}, @{$r->{rhs}}));
+    #$qid2dot->{$qid} = @{$r->{lhs}} + @{$r->{in}};
+    $fst->addRule(@$r{qw(lhs in out rhs)});
+  }
+
+  ##-- @queue: potential contexts to be investigated:
+  ##   @queue = ( $potential_context_1, ..., $potential_context_n )
+  #my @queue = ($lts->{implicit_bos} ? '#' : '');
+  #my ($ctx);
+  #while (defined($ctx=shift(@queue))) { ???; }
+
+  return $fst;
+}
 
 ##==============================================================================
 ## Methods: Rule Expansion
@@ -503,6 +542,24 @@ sub rule2str {
 	     );
 }
 
+## $str = rule2strNS($rule)
+##  + no spaces
+sub rule2strNS {
+  my $rule = shift;
+  return join('',
+	      '(',
+	      @{$rule->{lhs}},
+	      '[',
+	      @{$rule->{in}},
+	      ']',
+	      @{$rule->{rhs}},
+	      '=',
+	      @{$rule->{out}},
+	      ')',
+	     );
+}
+
+
 ##==============================================================================
 ## Methods: Info
 ##==============================================================================
@@ -515,7 +572,7 @@ sub info {
   $info->{'alph_nLetters'} = scalar(keys(%{$lts->{letters}}));
   $info->{'alph_nPhones'}  = scalar(keys(%{$lts->{phones}}));
   $info->{'alph_nSpecials'} = scalar(keys(%{$lts->{specials}}));
-  $info->{'alpha_nClasses'} = scalar(keys(%{$lts->{classes}}));
+  $info->{'alph_nClasses'} = scalar(keys(%{$lts->{classes}}));
 
   $info->{'nRules'} = $lts->{rules}  ? scalar(@{$lts->{rules}}) : 0;
   $info->{'nRulesX'} = $lts->{rulex} ? scalar(@{$lts->{rulex}}) : 0;

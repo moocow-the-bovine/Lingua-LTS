@@ -4,3 +4,15 @@ Makefile
 *blib
 Grimm
 
+*.sym
+*.qlab
+*.lab
+*.scl
+*.afst
+*.gfst
+*.tfst
+*.dot
+*.ps
+*.gz
+
+ims-german.*
