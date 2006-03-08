@@ -343,6 +343,168 @@ sub toAutomaton {
 }
 
 ##==============================================================================
+## Methods: index generation: brute force
+##==============================================================================
+
+##-- brute force search: gfsm tries
+##  + requires: expand_rules(), expand_alphabet()
+use Gfsm;
+sub bruteForceGfsmIndex {
+  my $lts = shift;
+  my $rulex = $lts->{rulex};
+  my $labs = $lts->{bfLabs} = Gfsm::Alphabet->new;
+  my $lsta = $lts->{lsta} = Gfsm::Automaton->newTrie;
+  my $rpta = $lts->{rpta} = Gfsm::Automaton->newTrie;
+
+  ##-- populate labels
+  $labs->insert($_) foreach ('<epsilon>', '#',
+			     sort(keys(%{$lts->{letters}})),
+			     sort(keys(%{$lts->{phones}})),
+			    );
+  my $key2lab = $lts->{key2lab} = $labs->asHash;
+  my $lab2key = $lts->{lab2key} = $labs->asArray;
+
+  ##-- populate context PTAs
+  my ($i,$r,$qids);
+  my $lsta2rules = $lts->{lsta2rules} = [];
+  my $rpta2rules = $lts->{rpta2rules} = [];
+  foreach $i (0..$#$rulex) {
+    $r = $rulex->[$i];
+
+    ##-- left context
+    $qids = $lsta->add_path_states([reverse(@$key2lab{@{$r->{lhs}}})], [], 0.0, 0,0,1);
+    $lsta2rules->[$_] .= pack('L',$i) foreach (@$qids);
+
+    ##-- right context
+    $qids = $rpta->add_path_states([@$key2lab{@{$r->{in}},@{$r->{rhs}}}], [], 0.0, 0,0,1);
+    $rpta2rules->[$_] .= pack('L',$i) foreach (@$qids);
+  }
+
+  ##-- sort index tries
+  $lsta->arcsort(Gfsm::ASMLower);
+  $rpta->arcsort(Gfsm::ASMLower);
+}
+
+##-- brute force search
+##   + requires: expand_alphabet()
+sub bruteForceSearch {
+  my $lts = shift;
+
+  my @fifo = ( {left=>'',right=>'',out=>'',rules=>[0..$#{$lts->{rulex}}], } );
+  ##-- fifo: ( $h1, ..., )
+  ##  $h = {
+  ##        left  => $left_ctx,
+  ##        right => $in . $right_ctx,
+  ##        out   => $buf_output,
+  ##        rules => \@potential_match_indices,
+  ##       }
+  my $hists = $lts->{bruteHistories} = {};
+  my ($h,$hstr, $ruli,$rul, $h2,$h2r, $nextL,$nextR);
+  while (defined($h=shift(@fifo))) {
+    $hstr = "$h->{left}.$h->{right}:$h->{out}";
+    next if (exists($hists->{$hstr})); ##-- avoid loops
+    $hists->{$hstr} = undef;           ##-- mark history as visited
+
+    if (@{$h->{rules}}==0) {
+      ##-- no potential matches: too much history
+
+      ##-- what to do here?!
+      next;
+    }
+    if (@{$h->{rules}}==1) {
+      ##-- only 1 rule matches: flush output & continue
+      $ruli = $h->{rules}[0];
+      $rul  = $lts->{rulex}[$ruli];
+      $h2r  = $h->{right};
+      substr($h2r,0,@{$rul->{in}},'');
+      $h2  = { left=>$h->{left}.$rul->{in}, right=>$h2r, out=>'', };
+      $h2->{rules} = $lts->potentialMatches($h2);
+      push(@fifo,$h2);
+      next;
+    }
+    ##-- multiple rules may match: extend histories
+    push(@fifo,@{$lts->extendLeft($h)});
+    push(@fifo,@{$lts->extendRight($h)});
+  }
+
+  return $lts;
+}
+
+## TODO: \@potentially_matching_rulex_indices = $lts->potentialMatches($history)
+sub potentialMatches {
+  my ($lts,$h) = @_;
+
+  ##-- find all potentially matching rule indices
+  my (%indices_r,%indices_l) = qw();
+
+  ##-- left context
+  my ($qid_l,$lo_i_l) = $lts->{lsta}->find_prefix([reverse(@{$lts->{key2lab}}{split(//,$h->{left})})], []);
+  return [] if ($lo_i_l != length($h->{left}));
+
+  ##-- right context
+  my ($qid_r,$lo_i_r) = $lts->{rpta}->find_prefix([@{$lts->{key2lab}}{split(//,$h->{right})}], []);
+  return [] if ($lo_i_r != length($h->{right}));
+
+  ##-- index hashes
+  @indices_l{unpack('L*',$lts->{lsta2rules}[$qid_l])} = undef;
+  @indices_r{unpack('L*',$lts->{rpta2rules}[$qid_r])} = undef;
+
+  ##-- joint: left & right
+  delete(@indices_r{grep {!exists($indices_l{$_})} keys(%indices_r)});
+
+  #return [map { $lts->{rulex}[$_] } sort {$a<=>$b} keys(%indices_r)];
+  return [sort {$a<=>$b} keys(%indices_r)];
+}
+
+## TODO: $h2 = $lts->extendLeft($h)
+sub extendLeft {
+  my ($lts,$h) = @_;
+
+  my ($qid,$lo_i) = $lts->{lsta}->find_prefix([reverse(@{$lts->{key2lab}}{split(//,$h->{left})})], []);
+  return [] if ($lo_i != length($h->{left}));
+
+  ##-- single-letter extensions
+  my @extensions = qw();
+  my ($ai,%h2rules_l,$h2rules);
+  for ($ai=Gfsm::ArcIter->new($lts->{lsta},$qid); $ai->ok; $ai->next()) {
+    %h2rules_l = map { $_=>undef } unpack('L*',$lts->{lsta2rules}[$ai->target]);
+    $h2rules = [grep {exists($h2rules_l{$_})} @{$h->{rules}}];
+    push(@extensions, {
+		       left =>($lts->{lab2key}[$ai->lower] . $h->{left}),
+		       right=>$h->{right},
+		       out  =>$h->{out},
+		       rules=>$h2rules,
+		      });
+  }
+
+  return \@extensions;
+}
+
+## TODO: $h2 = $lts->extendRight($h,$letter)
+sub extendRight {
+  my ($lts,$h) = @_;
+
+  my ($qid,$lo_i) = $lts->{rpta}->find_prefix([@{$lts->{key2lab}}{split(//,$h->{left})}], []);
+  return [] if ($lo_i != length($h->{right}));
+
+  ##-- single-letter extensions
+  my @extensions = qw();
+  my ($ai,%h2rules_l,$h2rules);
+  for ($ai=Gfsm::ArcIter->new($lts->{rpta},$qid); $ai->ok; $ai->next()) {
+    %h2rules_l = map { $_=>undef } unpack('L*',$lts->{rpta2rules}[$ai->target]);
+    $h2rules = [grep {exists($h2rules_l{$_})} @{$h->{rules}}];
+    push(@extensions, {
+		       left =>$h->{left},
+		       right=>($h->{right} . $lts->{lab2key}[$ai->lower]),
+		       out  =>$h->{out},
+		       rules=>$h2rules,
+		      });
+  }
+
+  return \@extensions;
+}
+
+##==============================================================================
 ## Methods: Rule Expansion
 ##==============================================================================
 
