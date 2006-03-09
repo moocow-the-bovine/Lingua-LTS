@@ -16,3 +16,7 @@ Grimm
 *.gz
 
 ims-german.*
+utest*
+utrain*
+
+*.pt

@@ -18,7 +18,7 @@ sub testbfi {
 
   $lts->expand_alphabet;
   $lts->expand_rules;
-  $lts->bruteForceGfsmIndex;
+  $lts->genIndexTries;
 
   my $lsta_qlab = Gfsm::Alphabet->new;
   $lsta_qlab->insert("$_:".join(',', unpack('L*', $lts->{lsta2rules}[$_])), $_)

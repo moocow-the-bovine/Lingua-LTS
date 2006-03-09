@@ -44,6 +44,7 @@ our %SPECIALS = (map { $_=>undef } @SPECIALS);
 ##     ##
 ##     ##-- debugging
 ##     apply_verbose => $bool,
+##     apply_warn=>$bool,
 ##
 sub new {
   my $that = shift;
@@ -55,6 +56,7 @@ sub new {
 		phones0=>{},
 		specials=>{%SPECIALS},
 		apply_verbose=>0,
+		apply_warn=>1,
 		implicit_bos=>1,
 		implicit_eos=>1,
 		@_
@@ -111,6 +113,7 @@ sub load {
       ($lhs,$in,$rhs,$out) = ($1,$2,$3,$4);
       push(@{$lts->{rules}},
 	   {
+	    id=>scalar(@{$lts->{rules}}),
 	    lhs=>[grep { defined($_) && $_ ne '' } split(/\s+/,$lhs)],
 	    in=>[grep { defined($_) && $_ ne '' } split(/\s+/,$in)],
 	    rhs=>[grep { defined($_) && $_ ne '' } split(/\s+/,$rhs)],
@@ -314,6 +317,7 @@ sub _att_safe_str {
 ## $automaton = $lts->toAutomaton()
 ## $automaton = $lts->toAutomaton($automaton)
 ##   + requires: expand_alphabet(), expand_rules()
+##   + INCOMPLETE
 sub toAutomaton {
   my ($lts,$fst) = @_;
   $fst = Lingua::LTS::Automaton->new() if (!$fst);
@@ -343,16 +347,27 @@ sub toAutomaton {
 }
 
 ##==============================================================================
-## Methods: index generation: brute force
+## Methods: index generation: Gfsm
 ##==============================================================================
 
-##-- brute force search: gfsm tries
+## undef = $lts->compile_tries()
 ##  + requires: expand_rules(), expand_alphabet()
+##  + populates keys:
+##
+##     labs => $gfsmAlphabet,
+##     key2lab => $alphabetHash,
+##     lab2key => $alphabetArray,
+##
+##     lsta => $left_context_sta,
+##     rpta => $input_right_context_pta,
+##
+##     lsta2rules => { $qid_lsta=>pack('L*', sort{$a<=>$b} @rule_indices), ... }
+##     rpta2rules => { $qid_lsta=>pack('L*', sort{$a<=>$b} @rule_indices), ... }
 use Gfsm;
-sub bruteForceGfsmIndex {
+sub compile_tries {
   my $lts = shift;
   my $rulex = $lts->{rulex};
-  my $labs = $lts->{bfLabs} = Gfsm::Alphabet->new;
+  my $labs = $lts->{labs} = Gfsm::Alphabet->new;
   my $lsta = $lts->{lsta} = Gfsm::Automaton->newTrie;
   my $rpta = $lts->{rpta} = Gfsm::Automaton->newTrie;
 
@@ -365,28 +380,133 @@ sub bruteForceGfsmIndex {
   my $lab2key = $lts->{lab2key} = $labs->asArray;
 
   ##-- populate context PTAs
-  my ($i,$r,$qids);
-  my $lsta2rules = $lts->{lsta2rules} = [];
-  my $rpta2rules = $lts->{rpta2rules} = [];
-  foreach $i (0..$#$rulex) {
-    $r = $rulex->[$i];
+  my ($ri,$xi,$r,$qids);
+
+  ##-- partial rules
+  my $lsta2partial = $lts->{lsta2partial} = [];
+  my $rpta2partial = $lts->{rpta2partial} = [];
+
+  ##-- full rules
+  my $lsta2full = $lts->{lsta2full} = {};
+  my $rpta2full = $lts->{rpta2full} = {};
+
+  foreach $xi (0..$#$rulex) {
+    $r  = $rulex->[$xi];
+    $ri = $r->{id};
 
     ##-- left context
     $qids = $lsta->add_path_states([reverse(@$key2lab{@{$r->{lhs}}})], [], 0.0, 0,0,1);
-    $lsta2rules->[$_] .= pack('L',$i) foreach (@$qids);
+    $lsta2partial->[$_] .= pack('L',$ri) foreach (@$qids);
+    $lsta2full->{$qids->[$#$qids]} .= pack('L',$ri);
 
     ##-- right context
     $qids = $rpta->add_path_states([@$key2lab{@{$r->{in}},@{$r->{rhs}}}], [], 0.0, 0,0,1);
-    $rpta2rules->[$_] .= pack('L',$i) foreach (@$qids);
+    $rpta2partial->[$_] .= pack('L',$ri) foreach (@$qids);
+    $rpta2full->{$qids->[$#$qids]} .= pack('L',$ri);
   }
+
+  ##-- cleanup maps
+  my ($q,%ids);
+  foreach $q (0..$#$lsta2partial) {
+    next if (!defined($lsta2partial->[$q]));
+
+    %ids = map {$_=>undef} unpack('L*',$lsta2partial->[$q]);
+    $lsta2partial->[$q] = pack('L*', sort {$a<=>$b} keys %ids);
+
+    if (defined($lsta2full->{$q})) {
+      %ids = map {$_=>undef} unpack('L*',$lsta2full->{$q});
+      $lsta2full->{$q} = pack('L*', sort {$a<=>$b} keys %ids);
+    }
+  }
+  foreach $q (0..$#$rpta2partial) {
+    next if (!defined($rpta2partial->[$q]));
+
+    %ids = map {$_=>undef} unpack('L*',$rpta2partial->[$q]);
+    $rpta2partial->[$q] = pack('L*', sort {$a<=>$b} keys %ids);
+
+    if (defined($rpta2full->{$q})) {
+      %ids = map {$_=>undef} unpack('L*',$rpta2full->{$q});
+      $rpta2full->{$q} = pack('L*', sort {$a<=>$b} keys %ids);
+    }
+  }
+
 
   ##-- sort index tries
   $lsta->arcsort(Gfsm::ASMLower);
   $rpta->arcsort(Gfsm::ASMLower);
 }
 
+##--------------------------------------------------------------
+## LTS: Indexed Application
+
+## @phones = $lts->apply_indexed($word)
+##  + get phones for string $word
+##  + requires: compile_tries()
+*apply_indexed = \&apply_word_indexed;
+sub apply_word_indexed {
+  my ($lts,$word) = @_;
+  return $lts->apply_chars_indexed([
+				    ($lts->{implicit_bos} ? '#' : qw()),
+				    split(//,$word),
+				    ($lts->{implicit_eos} ? '#' : qw()),
+				   ],
+				   ($lts->{implicit_bos} ? 1 : 0));
+}
+
+## @phones = $lts->apply_chars_indexed($lts,\@word_chars,$initial_position)
+##  + get phones for word
+##  + requires: compile_tries()
+sub apply_chars_indexed {
+  my ($lts,$wchars,$pos) = @_;
+  $pos = 0 if (!defined($pos));
+  my @wlabs = map {defined($_) ? $_ : $Gfsm::noLabel} @{$lts->{key2lab}}{@$wchars};
+
+  my (@phones, $qids_l,$lo_i_l, $qids_r,$lo_i_r, %ruleids,%ruleids_l, $ruli,$rul);
+ CHAR:
+  while ($pos <= $#$wchars) {
+    if ($wchars->[$pos] eq '#') { ++$pos; next; } ##-- ignore BOS/EOS markers
+
+    ##-- get matching states
+    ($qids_r,$lo_i_r) = $lts->{rpta}->find_prefix_states([@wlabs[$pos..$#wlabs]],[]);
+    %ruleids   = map {$_=>undef} map {defined($_) ? unpack('L*', $_) : qw()} @{$lts->{rpta2full}}{@$qids_r};
+
+    ($qids_l,$lo_i_l) = $lts->{lsta}->find_prefix_states([reverse(@wlabs[0..($pos-1)])],[]);
+    %ruleids_l = map {$_=>undef} map {defined($_) ? unpack('L*', $_) : qw()} @{$lts->{lsta2full}}{@$qids_l};
+
+    delete(@ruleids{grep {!exists($ruleids_l{$_})} keys %ruleids});
+
+    $ruli=(sort {$a<=>$b} keys(%ruleids))[0];
+
+    if (!defined($ruli)) {
+      if ($lts->{apply_warn}) {
+	my $errword = join('', @$wchars[0..($pos-1)], '<<HERE>>', @$wchars[$pos..$#$wchars]);
+	warn(__PACKAGE__ , ": could not translate word \`$errword' -- skipping");
+	last;
+      }
+      return qw();
+    }
+
+    $rul = $lts->{rules}[$ruli];
+    if ($lts->{apply_verbose}) {
+      my $vword = join('', @$wchars[0..($pos-1)], '_', @$wchars[$pos..$#$wchars]);
+      print STDERR "Match: \'$vword\' matches rule ", rule2str($rul), "\n";
+    }
+
+    push(@phones,@{$rul->{out}});
+    $pos += @{$rul->{in}};
+    next CHAR;
+  }
+  return @phones;
+}
+
+##==============================================================================
+## Methods: index generation: brute force
+##==============================================================================
+
+
 ##-- brute force search
 ##   + requires: expand_alphabet()
+##   + INCOMPLETE
 sub bruteForceSearch {
   my $lts = shift;
 
@@ -613,7 +733,7 @@ sub apply_word {
 			   ($lts->{implicit_bos} ? 1 : 0));
 }
 
-## @phones = $lts->apply_chars($lts,\@word_chars)
+## @phones = $lts->apply_chars($lts,\@word_chars,$initial_position)
 ##  + get phones for word
 *apply_list = \&apply_chars;
 sub apply_chars {
@@ -640,9 +760,12 @@ sub apply_chars {
       }
     }
     ##-- no match
-    my $errword = join('', @$wchars[0..$pos-1], '<<HERE>>', @$wchars[$pos..$#$wchars]);
-    warn("$0: could not translate word \`$errword' -- skipping");
-    last;
+    if ($lts->{apply_warn}) {
+      my $errword = join('', @$wchars[0..$pos-1], '<<HERE>>', @$wchars[$pos..$#$wchars]);
+      warn(__PACKAGE__ , ": could not translate word \`$errword' -- skipping");
+      last;
+    }
+    return qw();
   }
   return @phones;
 }

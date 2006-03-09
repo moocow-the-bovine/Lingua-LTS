@@ -1,7 +1,7 @@
 #!/usr/bin/perl -w
 
 use IO::File;
-use Getopt::Long;
+use Getopt::Long qw(:config no_ignore_case);
 use Pod::Usage;
 
 use lib qw(.);
@@ -17,6 +17,7 @@ our $lts = Lingua::LTS->new();
 
 our $input_words = 0;
 our $do_expand = 0;
+our $do_index = 0;
 our $verbose = 0;
 
 
@@ -29,7 +30,9 @@ GetOptions(##-- General
 	   ##-- behavior
 	   'words|w!' => \$input_words,
 	   'verbose|v!' => \$lts->{apply_verbose},
+	   'warn|W!'   => \$lts->{apply_warn},
 	   'expand|x!'  => \$do_expand,
+	   'index|i!'   => \$do_index,
 
 	   'bos|b!' => \$lts->{implicit_bos},
 	   'eos|e!' => \$lts->{implicit_eos},
@@ -49,7 +52,7 @@ pod2usage({-exitval=>0, -verbose=>0}) if ($help || !@ARGV);
 ##  + just prints out
 sub lts_apply_word {
   my ($lts,$word) = @_;
-  my @phones = $lts->apply_word($word);
+  my @phones = $do_index ? $lts->apply_word_indexed($word): $lts->apply_word($word);
   print $word, "\t", join(' ', @phones), "\n";
 }
 
@@ -62,12 +65,26 @@ sub lts_apply_word {
 $lts_file = shift;
 $lts->load($lts_file);
 
-if ($do_expand) {
-  print STDERR "$0: expanding ", scalar(@{$lts->{rules}}), " rules...\n";
+if ($do_expand || $do_index,) {
+  print STDERR "$0: expanding alphabet... ";
+  $lts->expand_alphabet;
+  print STDERR "done.\n";
+
+  print STDERR "$0: expanding ", scalar(@{$lts->{rules}}), " rules... ";
   $lts->expand_rules();
-  $lts->{rules} = $lts->{rulex};
-  %{$lts->{classes}} = qw(); ##-- HACK
-  print STDERR "$0: generated ", scalar(@{$lts->{rulex}}), " expanded rules.\n";
+  print STDERR "generated ", scalar(@{$lts->{rulex}}), " expanded rules.\n";
+
+  if (!$do_index) {
+    ##-- HACK
+    $lts->{rules} = $lts->{rulex};
+    %{$lts->{classes}} = qw();
+  }
+
+  if ($do_index) {
+    print STDERR "$0: compiling trie index... ";
+    $lts->compile_tries();
+    print STDERR " done.\n";
+  }
 }
 
 push(@ARGV,'-') if (!@ARGV);
@@ -99,8 +116,10 @@ lts-apply.perl - apply LTS rules
  Options:
   -help
   -words                 # inputs are words, not filenames
-  -expand               # expand classes before applying rules (SLOW!)
+  -expand                # expand classes before applying rules (SLOW!)
+  -index                 # use trie index to apply rules
   -verbose               # trace rule application to STDERR
+  -nowarn                # don't warn about untranslatable words
   -bos , -nobos          # do/don't implicitly prepend word-initial '#' (default=yes)
   -eos , -noeos          # do/don't implicitly append  word-final   '#' (default=yes)
 
