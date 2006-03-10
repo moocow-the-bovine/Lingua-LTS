@@ -15,8 +15,10 @@ Grimm
 *.ps
 *.gz
 
-ims-german.*
+*ims-german[.-]*
 utest*
 utrain*
+aho-corasick*
 
 *.pt
+*.ipt

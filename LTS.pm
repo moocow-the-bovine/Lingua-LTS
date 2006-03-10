@@ -4,7 +4,9 @@
 
 
 package Lingua::LTS;
-use Lingua::LTS::Automaton;
+#use Lingua::LTS::Automaton;
+use Lingua::LTS::Trie;
+use Lingua::LTS::ACPM;
 use strict;
 
 use IO::File;
@@ -347,6 +349,89 @@ sub toAutomaton {
 }
 
 ##==============================================================================
+## Methods: index generation: ACPM
+##==============================================================================
+
+## undef = $lts->compile_acpm(%args)
+##  + %args:
+##     complete=>$bool  # complete the ACPM
+##  + requires: expand_rules(), expand_alphabet()
+##  + populates: $lts->{acpm}
+sub compile_acpm {
+  my ($lts,%args) = @_;
+
+  ##-- step 1: generate trie
+  my $trie = Lingua::LTS::Trie->new;
+  my ($r,%rstrs,$rstr,$q);
+  foreach $r (@{$lts->{rulex}}) {
+    %rstrs = map { $_=>join('',@{$r->{$_}}) } (qw(lhs in out rhs));
+    $rstr  = join('', @rstrs{qw(lhs in rhs)});
+    if (defined($q=$trie->s2q($rstr))) {
+      $trie->{out}{$q}{$r->{id}} = undef;
+    } else {
+      $q = $trie->add($rstr,{$r->{id}=>undef});
+    }
+  }
+
+  ##-- step 2: generate ACPM
+  my $acpm = $lts->{acpm} = Lingua::LTS::ACPM->newFromTrie($trie,joinout=>\&_acpm_joinout);
+  $acpm->complete() if ($args{complete});
+}
+
+## \%idhash = _acpm_joinout($hash1_or_undef, $hash2_or_undef)
+sub _acpm_joinout {
+  if (defined($_[0])) {
+    @{$_[0]}{keys %{$_[1]}} = undef if (defined($_[1]));
+    return $_[0];
+  }
+  return {%{$_[1]}} if (defined($_[1]));
+}
+
+##==============================================================================
+## Methods: indexed application: ACPM
+##==============================================================================
+
+## @phones = $lts->apply_indexed($word)
+##  + get phones for string $word
+##  + requires: compile_tries()
+*apply_indexed = *apply_word_indexed = \&apply_word_indexed_acpm;
+sub apply_word_indexed_acpm {
+  my ($lts,$word) = @_;
+  $word = '#'.$word if ($lts->{implicit_bos});
+  $word = $word.'#' if ($lts->{implicit_eos});
+
+  ##-- get matches
+  my @matches = $lts->{acpm}->matches($word);
+
+  ##-- adjust match positions (compensate for rhs,lhs)
+  my @best    = qw();
+  my ($i,$ruli,$rul,$besti);
+  foreach $i (grep { defined($matches[$_]) } (0..$#matches)) {
+    foreach $ruli (keys %{$matches[$i]}) {
+      $rul   = $lts->{rules}[$ruli];
+      $besti = $i - @{$rul->{rhs}} - @{$rul->{in}} + 1;
+      $best[$besti] = $ruli if (!defined($best[$besti]) || $best[$besti] > $ruli);
+    }
+  }
+
+  ##-- get output phones
+  my @phones = qw();
+  for ($i=0; $i <= $#best; $i++) {
+    next if (!defined($best[$i]));
+    if (defined($rul=$lts->{rules}[$best[$i]])) {
+      if ($lts->{apply_verbose}) {
+	my $vword = substr($word,0,($i-1)).'_'.substr($word,$i,length($word)-$i);
+	print STDERR "Match: \'$vword\' matches rule $rul->{id}: ", rule2str($rul), "\n";
+      }
+      push(@phones, @{$rul->{out}});
+      $i += $#{$rul->{in}};
+    }
+  }
+
+  return @phones;
+}
+
+##==============================================================================
 ## Methods: index generation: Gfsm
 ##==============================================================================
 
@@ -363,8 +448,8 @@ sub toAutomaton {
 ##
 ##     lsta2rules => { $qid_lsta=>pack('L*', sort{$a<=>$b} @rule_indices), ... }
 ##     rpta2rules => { $qid_lsta=>pack('L*', sort{$a<=>$b} @rule_indices), ... }
-use Gfsm;
-sub compile_tries {
+#use Gfsm;
+sub compile_tries0 {
   my $lts = shift;
   my $rulex = $lts->{rulex};
   my $labs = $lts->{labs} = Gfsm::Alphabet->new;
@@ -432,8 +517,8 @@ sub compile_tries {
 
 
   ##-- sort index tries
-  $lsta->arcsort(Gfsm::ASMLower);
-  $rpta->arcsort(Gfsm::ASMLower);
+  $lsta->arcsort(Gfsm::ASMLower());
+  $rpta->arcsort(Gfsm::ASMLower());
 }
 
 ##--------------------------------------------------------------
@@ -442,8 +527,9 @@ sub compile_tries {
 ## @phones = $lts->apply_indexed($word)
 ##  + get phones for string $word
 ##  + requires: compile_tries()
-*apply_indexed = \&apply_word_indexed;
-sub apply_word_indexed {
+
+#*apply_indexed = *apply_word_indexed = \&apply_word_indexed_gfsm;
+sub apply_word_indexed_gfsm {
   my ($lts,$word) = @_;
   return $lts->apply_chars_indexed([
 				    ($lts->{implicit_bos} ? '#' : qw()),
@@ -456,7 +542,7 @@ sub apply_word_indexed {
 ## @phones = $lts->apply_chars_indexed($lts,\@word_chars,$initial_position)
 ##  + get phones for word
 ##  + requires: compile_tries()
-sub apply_chars_indexed {
+sub apply_chars_indexed_gfsm {
   my ($lts,$wchars,$pos) = @_;
   $pos = 0 if (!defined($pos));
   my @wlabs = map {defined($_) ? $_ : $Gfsm::noLabel} @{$lts->{key2lab}}{@$wchars};
@@ -489,7 +575,7 @@ sub apply_chars_indexed {
     $rul = $lts->{rules}[$ruli];
     if ($lts->{apply_verbose}) {
       my $vword = join('', @$wchars[0..($pos-1)], '_', @$wchars[$pos..$#$wchars]);
-      print STDERR "Match: \'$vword\' matches rule ", rule2str($rul), "\n";
+      print STDERR "Match: \'$vword\' matches rule $rul->{id}: ", rule2str($rul), "\n";
     }
 
     push(@phones,@{$rul->{out}});
@@ -751,7 +837,7 @@ sub apply_chars {
       if (defined($newpos=$lts->rule_matches($rule,$classes,$wchars,$pos))) {
 	if ($lts->{apply_verbose}) {
 	  my $vword = join('', @$wchars[0..$pos-1], '_', @$wchars[$pos..$#$wchars]);
-	  print STDERR "Match: \'$vword' matches rule ", rule2str($rule), "\n";
+	  print STDERR "Match: \'$vword' matches rule $rule->{id}: ", rule2str($rule), "\n";
 	}
 
 	push(@phones,@{$rule->{out}});

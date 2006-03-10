@@ -15,5 +15,6 @@ class * a b
 
     [ a ] = A
 
-b a [ b ] = P
-    [ b ] = B
+b a [ b b ] a b = B
+b a [ b ]       = P
+    [ b ]       = B

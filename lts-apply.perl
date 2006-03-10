@@ -1,7 +1,8 @@
 #!/usr/bin/perl -w
 
 use IO::File;
-use Getopt::Long qw(:config no_ignore_case);
+use Getopt::Long (':config'=>'no_ignore_case');
+use Encode qw(encode decode);
 use Pod::Usage;
 
 use lib qw(.);
@@ -18,7 +19,10 @@ our $lts = Lingua::LTS->new();
 our $input_words = 0;
 our $do_expand = 0;
 our $do_index = 0;
+our $do_lower = 1;
 our $verbose = 0;
+our $encoding = 'latin1';
+our $outfile = '-';
 
 
 ##------------------------------------------------------------------------------
@@ -33,9 +37,13 @@ GetOptions(##-- General
 	   'warn|W!'   => \$lts->{apply_warn},
 	   'expand|x!'  => \$do_expand,
 	   'index|i!'   => \$do_index,
+	   'lower|l!'   => \$do_lower,
+	   'encoding|e=s' => \$encoding,
 
-	   'bos|b!' => \$lts->{implicit_bos},
-	   'eos|e!' => \$lts->{implicit_eos},
+	   'output|out|o=s' => \$outfile,
+
+	   'bos!' => \$lts->{implicit_bos},
+	   'eos!' => \$lts->{implicit_eos},
 	  );
 
 pod2usage({-exitval=>0, -verbose=>0}) if ($help || !@ARGV);
@@ -52,8 +60,11 @@ pod2usage({-exitval=>0, -verbose=>0}) if ($help || !@ARGV);
 ##  + just prints out
 sub lts_apply_word {
   my ($lts,$word) = @_;
-  my @phones = $do_index ? $lts->apply_word_indexed($word): $lts->apply_word($word);
-  print $word, "\t", join(' ', @phones), "\n";
+  my $uword = defined($encoding) ? decode($encoding,$word) : $word;
+  $uword = lc($uword) if ($do_lower);
+  #$uword = encode($encoding,$uword) if (defined($encoding));
+  my @phones = $do_index ? $lts->apply_word_indexed($uword): $lts->apply_word($uword);
+  $outfh->print($word, "\t", join(' ', @phones), "\n");
 }
 
 
@@ -65,6 +76,9 @@ sub lts_apply_word {
 $lts_file = shift;
 $lts->load($lts_file);
 
+$outfh = IO::File->new(">$outfile")
+  or die("$0: open failed for output file '$outfile': $!");
+
 if ($do_expand || $do_index,) {
   print STDERR "$0: expanding alphabet... ";
   $lts->expand_alphabet;
@@ -72,18 +86,18 @@ if ($do_expand || $do_index,) {
 
   print STDERR "$0: expanding ", scalar(@{$lts->{rules}}), " rules... ";
   $lts->expand_rules();
-  print STDERR "generated ", scalar(@{$lts->{rulex}}), " expanded rules.\n";
+  print STDERR "expanded to ", scalar(@{$lts->{rulex}}), " rules.\n";
 
   if (!$do_index) {
-    ##-- HACK
+    ##-- HACK: verbose expanded application
     $lts->{rules} = $lts->{rulex};
     %{$lts->{classes}} = qw();
   }
 
   if ($do_index) {
-    print STDERR "$0: compiling trie index... ";
-    $lts->compile_tries();
-    print STDERR " done.\n";
+    print STDERR "$0: compiling ACPM index... ";
+    $lts->compile_acpm();
+    print STDERR "compiled $lts->{acpm}{nq} states.\n";
   }
 }
 
@@ -96,6 +110,8 @@ if ($input_words) {
     lts_apply_word($lts,$_);
   }
 }
+
+$outfh->close;
 
 
 __END__
@@ -118,6 +134,7 @@ lts-apply.perl - apply LTS rules
   -words                 # inputs are words, not filenames
   -expand                # expand classes before applying rules (SLOW!)
   -index                 # use trie index to apply rules
+  -tolower, -nolower     # canonicalize input to lower case
   -verbose               # trace rule application to STDERR
   -nowarn                # don't warn about untranslatable words
   -bos , -nobos          # do/don't implicitly prepend word-initial '#' (default=yes)
