@@ -3,6 +3,7 @@
 use IO::File;
 use Getopt::Long (':config'=>'no_ignore_case');
 use Encode qw(encode decode);
+use Time::HiRes qw(gettimeofday tv_interval);
 use Pod::Usage;
 
 use lib qw(.);
@@ -24,6 +25,7 @@ our $verbose = 0;
 our $encoding = 'latin1';
 our $outfile = '-';
 
+our $do_gindex = 0;
 
 ##------------------------------------------------------------------------------
 ## Command-line
@@ -35,8 +37,11 @@ GetOptions(##-- General
 	   'words|w!' => \$input_words,
 	   'verbose|v!' => \$lts->{apply_verbose},
 	   'warn|W!'   => \$lts->{apply_warn},
+
 	   'expand|x!'  => \$do_expand,
 	   'index|i!'   => \$do_index,
+	   'gindex|g!'  => \$do_gindex, ##-- little bit faster: real dft ought to help ...
+
 	   'lower|l!'   => \$do_lower,
 	   'encoding|e=s' => \$encoding,
 
@@ -63,7 +68,11 @@ sub lts_apply_word {
   my $uword = defined($encoding) ? decode($encoding,$word) : $word;
   $uword = lc($uword) if ($do_lower);
   #$uword = encode($encoding,$uword) if (defined($encoding));
-  my @phones = $do_index ? $lts->apply_word_indexed($uword): $lts->apply_word($uword);
+  my @phones = ($do_index && !$do_gindex
+		? $lts->apply_word_indexed($uword)
+		: ($do_gindex
+		   ? $lts->apply_word_indexed_acpm_gfsm($uword)
+		   : $lts->apply_word($uword)));
   $outfh->print($word, "\t", join(' ', @phones), "\n");
 }
 
@@ -79,7 +88,7 @@ $lts->load($lts_file);
 $outfh = IO::File->new(">$outfile")
   or die("$0: open failed for output file '$outfile': $!");
 
-if ($do_expand || $do_index,) {
+if ($do_expand || $do_index || $do_gindex) {
   print STDERR "$0: expanding alphabet... ";
   $lts->expand_alphabet;
   print STDERR "done.\n";
@@ -88,30 +97,54 @@ if ($do_expand || $do_index,) {
   $lts->expand_rules();
   print STDERR "expanded to ", scalar(@{$lts->{rulex}}), " rules.\n";
 
-  if (!$do_index) {
+  if (!$do_index && !$do_gindex) {
     ##-- HACK: verbose expanded application
     $lts->{rules} = $lts->{rulex};
     %{$lts->{classes}} = qw();
   }
 
-  if ($do_index) {
+  if ($do_index || $do_gindex) {
     print STDERR "$0: compiling ACPM index... ";
     $lts->compile_acpm();
     print STDERR "compiled $lts->{acpm}{nq} states.\n";
+
+    if ($do_gindex) {
+      require Gfsm;
+
+      print STDERR "$0: completing ACPM... ";
+      $lts->{acpm}->complete();
+      print STDERR "done.\n";
+
+      print STDERR "$0: generating GFSM index... ";
+      $lts->{glabs} = $lts->{acpm}->gfsmArcLabels();
+      $lts->{gacpm} = $lts->{acpm}->gfsmTrie($lts->{glabs});
+      print STDERR "done.\n";
+    }
   }
 }
+
+my $tv_started = [gettimeofday];
+my $ntoks = 0;
 
 push(@ARGV,'-') if (!@ARGV);
 if ($input_words) {
   lts_apply_word($lts,$_) foreach (@ARGV);
+  $ntoks = @ARGV;
 } else {
   while (<>) {
     chomp;
     lts_apply_word($lts,$_);
+    ++$ntoks;
   }
 }
 
 $outfh->close;
+
+##-- summary
+my $elapsed = tv_interval($tv_started, [gettimeofday]);
+print STDERR
+  sprintf("$0: Processed %d tokens in %.2f secs: %.2f tok/sec\n",
+	  $ntoks, $elapsed, ($elapsed ? $ntoks/$elapsed : -1));
 
 
 __END__

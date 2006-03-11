@@ -393,7 +393,7 @@ sub _acpm_joinout {
 
 ## @phones = $lts->apply_indexed($word)
 ##  + get phones for string $word
-##  + requires: compile_tries()
+##  + requires: compile_acpm()
 *apply_indexed = *apply_word_indexed = \&apply_word_indexed_acpm;
 sub apply_word_indexed_acpm {
   my ($lts,$word) = @_;
@@ -402,12 +402,34 @@ sub apply_word_indexed_acpm {
 
   ##-- get matches
   my @matches = $lts->{acpm}->matches($word);
+  return $lts->matches2phones($word,\@matches);
+}
+
+## @phones = $lts->apply_indexed($word)
+##  + get phones for string $word
+##  + requires: $lts->{acpm}, $lts->{gacpm}, $lts->{glabs}
+sub apply_word_indexed_acpm_gfsm {
+  my ($lts,$word) = @_;
+  $word = '#'.$word if ($lts->{implicit_bos});
+  $word = $word.'#' if ($lts->{implicit_eos});
+
+  ##-- get matches
+  my @wlabs   = grep { defined($_) } @{$lts->{glabs}->asHash}{split(//,$word)};
+  my $qids    = $lts->{gacpm}->find_prefix_states(\@wlabs,[]);
+  my @matches = @{$lts->{acpm}{out}}{@$qids};
+  return $lts->matches2phones($word,\@matches);
+}
+
+
+## @phones = $lts->matches2phones($word,\@matches)
+sub matches2phones {
+  my ($lts,$word,$matches) = @_;
 
   ##-- adjust match positions (compensate for rhs,lhs)
   my @best    = qw();
   my ($i,$ruli,$rul,$besti);
-  foreach $i (grep { defined($matches[$_]) } (0..$#matches)) {
-    foreach $ruli (keys %{$matches[$i]}) {
+  foreach $i (grep { defined($matches->[$_]) } (0..$#$matches)) {
+    foreach $ruli (keys %{$matches->[$i]}) {
       $rul   = $lts->{rules}[$ruli];
       $besti = $i - @{$rul->{rhs}} - @{$rul->{in}} + 1;
       $best[$besti] = $ruli if (!defined($best[$besti]) || $best[$besti] > $ruli);
@@ -420,7 +442,7 @@ sub apply_word_indexed_acpm {
     next if (!defined($best[$i]));
     if (defined($rul=$lts->{rules}[$best[$i]])) {
       if ($lts->{apply_verbose}) {
-	my $vword = substr($word,0,($i-1)).'_'.substr($word,$i,length($word)-$i);
+	my $vword = substr($word,0,($i-1)).'_'.substr($word,($i-1),length($word)-$i+1);
 	print STDERR "Match: \'$vword\' matches rule $rul->{id}: ", rule2str($rul), "\n";
       }
       push(@phones, @{$rul->{out}});
