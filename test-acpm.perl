@@ -17,7 +17,7 @@ sub test1 {
   our @rules = (
 		{lhs=>[],        in=>[qw(a)],   rhs=>[],        out=>['A'] },  ##--   [a:A]
 		#{lhs=>[qw(b a)], in=>[qw(b)],   rhs=>[qw(b)],   out=>['']  },  ##-- ba[b:]bb
-		{lhs=>[qw(b a)], in=>[qw(b b)], rhs=>[qw(a b)], out=>['B'] },  ##-- ba[bb:B]ab
+		#{lhs=>[qw(b a)], in=>[qw(b b)], rhs=>[qw(a b)], out=>['B'] },  ##-- ba[bb:B]ab
 		{lhs=>[qw(b a)], in=>[qw(b)],   rhs=>[],        out=>['P'] },  ##-- ba[b:P]
 		{lhs=>[],        in=>[qw(b)],   rhs=>[],        out=>['B'] },  ##--   [b:B]
 	       );
@@ -63,10 +63,16 @@ sub testims2x { testltsx('lts-ims-german-2.lts'); }
 ##--------------------------------------------------------------
 ## Debug: FSM Viewing
 
-sub viewtrie  { $trie->viewps(title=>'Lingua::LTS::Trie',bg=>1,states=>$tqlabs_d,@_); }
+BEGIN { our %fstargs = (out2str=>\&out2str_ruleids); }
 
-sub viewacpm  { $acpm->viewps(title=>'Lingua::LTS::ACPM_debug',bg=>1,states=>$qlabs_d,@_); }
-sub viewacpm0 { $acpm0->viewps(title=>'Lingua::LTS::ACPM_0',bg=>1,states=>$qlabs_d,@_); }
+sub viewtrie    { $trie->viewps(bg=>1,states=>$tqlabs_d,title=>'Trie',@_); }
+sub viewtriefst { $trie->viewfst(bg=>1,states=>$tqlabs_p,%fstargs,title=>'Trie/FST',@_); }
+
+sub viewacpm    { $acpm->viewps(bg=>1,states=>$qlabs_d,title=>'ACPM',@_); }
+sub viewacpmfst { $acpm->viewfst(bg=>1,states=>$qlabs_p,%fstargs,title=>'ACPM/FST',@_); }
+
+sub viewacpm0    { $acpm0->viewps(bg=>1,states=>$qlabs_d,title=>'ACPM_0',@_); }
+sub viewacpm0fst { $acpm0->viewfst(bg=>1,states=>$qlabs_p,%fstargs,title=>'ACPM_0/FST',@_); }
 
 ##--------------------------------------------------------------
 ## Generation: Trie: Native
@@ -87,15 +93,24 @@ sub gentrie {
     $q2rule->{$q} = $r;
   }
 
-  our $tqlabs_d = $trie->gfsmStateLabels;
-  while (($q,$out) = each(%{$trie->{out}})) {
-    my $oldlab = $tqlabs_d->find_key($q);
-    $oldlab =~ s/\=HASH.*$/\=/;
-    $tqlabs_d->insert($oldlab.join('|', map { rule2str($rules[$_]) } sort {$a<=>$b} keys(%$out)), $q);
-  }
+  our $tqlabs_d = $trie->gfsmStateLabels(undef,out2str=>\&out2str_ruleids);
+  our $tqlabs_p = $trie->gfsmStateLabels(undef,out2str=>undef);
+
+  our $tolabs_d = $trie->gfsmOutputLabels(undef,out2str=>\&out2str_ruleids);
 }
 #test1;
 #gentrie;
+
+##--------------------------------------------------------------
+## Utilities
+sub out2str_ruleids {
+  return (defined($_[0])
+	  ? ('='.join('|',
+		      map { rule2str($rules[$_]) }
+		      sort { $a<=>$b } keys(%{$_[0]})))
+	  : '');
+}
+
 
 ##--------------------------------------------------------------
 ## Generation: ACPM: native
@@ -119,12 +134,8 @@ sub genacpm {
   $acpm0->fromTrie($trie,joinout=>\&joinout_hash);
   our $acpm   = $acpm0->clone->complete;
 
-  our $qlabs_d = $acpm->gfsmStateLabels;
-  while (($q,$out) = each(%{$acpm->{out}})) {
-    my $oldlab = $qlabs_d->find_key($q);
-    $oldlab =~ s/\=HASH.*$/\=/;
-    $qlabs_d->insert($oldlab.join('|', map { rule2str($rules[$_]) } sort {$a<=>$b} keys(%$out)), $q);
-  }
+  our $qlabs_d = $acpm->gfsmStateLabels(undef,out2str=>\&out2str_ruleids);
+  our $qlabs_p = $acpm->gfsmStateLabels(undef,out2str=>undef);
 }
 
 ##--------------------------------------------------------------
@@ -181,15 +192,15 @@ sub lkptest {
   $out = join(' ', @out);
   print "lts($str) = $out\n";
 }
-#test1;
-#genacpm;
-#lkptest('ababbab');
-#lkptest('babbab');
-##--
-testims2x;
+test1;
 genacpm;
-#lkptest('#schied#');
-lkptest('#unterschied#');
+#lkptest('ababbab');
+lkptest('babbab');
+##--
+#testims2x;
+#genacpm;
+##lkptest('#schied#');
+#lkptest('#unterschied#');
 
 ##--- main: dummy
 foreach $i (0..5) {

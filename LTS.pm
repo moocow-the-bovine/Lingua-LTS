@@ -186,15 +186,23 @@ sub save_symbols {
 
 ## undef = $lts->print_symbols_lines($fh,$classname,\@symbols)
 sub print_symbols_lines {
-  my ($lts,$fh,$class,$syms) = @_;
-  my ($line);
+  my ($lts,$fh) = (shift,shift);
+  $fh->print($lts->symbols_lines(@_));
+}
+
+## @lines = $lts->symbols_lines($classname,\@symbols)
+sub symbols_lines {
+  my ($lts,$class,$syms) = @_;
+  my @lines = qw();
+  my ($line)
   while (@$syms) {
     $line = "$class\t";
     while (@$syms && length($line) + length($syms->[0]) < 80) {
       $line .= ' '.shift(@$syms);
     }
-    $fh->print($line,"\n");
+    push(@lines,$line."\n");
   }
+  return @lines;
 }
 
 
@@ -352,12 +360,13 @@ sub toAutomaton {
 ## Methods: index generation: ACPM
 ##==============================================================================
 
-## undef = $lts->compile_acpm(%args)
+## $acpm = $lts->toACPM(%args)
 ##  + %args:
 ##     complete=>$bool  # complete the ACPM
 ##  + requires: expand_rules(), expand_alphabet()
 ##  + populates: $lts->{acpm}
-sub compile_acpm {
+*compile_acpm = \&toACPM;
+sub toACPM {
   my ($lts,%args) = @_;
 
   ##-- step 1: generate trie
@@ -376,6 +385,8 @@ sub compile_acpm {
   ##-- step 2: generate ACPM
   my $acpm = $lts->{acpm} = Lingua::LTS::ACPM->newFromTrie($trie,joinout=>\&_acpm_joinout);
   $acpm->complete() if ($args{complete});
+
+  return $acpm;
 }
 
 ## \%idhash = _acpm_joinout($hash1_or_undef, $hash2_or_undef)
@@ -386,6 +397,66 @@ sub _acpm_joinout {
   }
   return {%{$_[1]}} if (defined($_[1]));
 }
+
+## $labs = $lts->gfsmLabels
+##   + requires: $lts->expand_alphabet()
+sub gfsmLabels {
+  my $lts = shift;
+  my $labs = Gfsm::Labels->new;
+  $labs->insert($_) foreach ('<epsilon>', map { sort keys %$_ } @$lts{qw(specials letters phones)});
+  return $labs;
+}
+
+## @symLines = $lts->gfsmSymbolsLines()
+##   + requires: $lts->expand_alphabet()
+sub gfsmSymbols {
+  my $lts = shift;
+  return ($lts->symbols_lines('Special', $lts->{specials}), "\n",
+	  $lts->symbols_lines('Letter', $lts->{letters}), "\n",
+	  $lts->symbols_lines('Phon', $lts->{phones}), "\n");
+}
+
+## $gfsmFST = $lts->gfsmFST(%args)
+##  + requires: $lts->{acpm} (complete)
+##  + %args:
+##     ilabels=>$ilabs, ##-- default = $lts->gfsmLabels()
+##     olabels=>$olabs, ##-- default = $ilabs
+sub gfsmTransducer {
+  my ($lts,%args) = @_;
+  my $ilabs = $args{ilabels} ? $args{ilabels} : $lts->gfsmLabels();
+  my $olabs = $args{olabels} ? $args{olabels} : $ilabs;
+  my $acpm  = $lts->{acpm};
+  my $goto  = $acpm->{goto};
+  my $fst   = $acpm->gfsmAutomaton(ilabels=>$ilabs,dosort=>0);
+
+  ##-- Init: build reverse-arc index for ACPM arcs
+  my @Q = (0..($acpm->{nq}-1));
+  my $rdelta = []; ##-- $qto=>{$a=>$qfrom,...}
+  my ($q,$a,$qto);
+  foreach $q (@Q) {
+    while (($a,$qto)=each(%{$goto->[$q]})) {                   ##-- reverse arc-index
+      $rdelta->[$qto]{$a} = $q;
+    }
+  }
+
+  ##-- Phase 1:
+  ##    + map output rules to the states at which they would apply,
+  ##      factoring out input and right-hand side
+  my $rul2q = []; ##-- $rulid=>{$q=>undef,....}
+  my $rules = $lts->{rules};
+  my ($qout,$rulid,$rul,$rhslen);
+  while (($q,$qout)=each(%{$acpm->{out}})) {
+    foreach $rulid (keys %$qout) {
+      $rul = $rules->[$rulid];
+      $rhslen = @{$rul->{in}} + @{$rul->{rhs}} - 1;
+      ##-- ARGH: CONTINUE HERE!
+    }
+  }
+
+  return $fst;
+}
+
+
 
 ##==============================================================================
 ## Methods: indexed application: ACPM

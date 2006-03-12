@@ -2,7 +2,6 @@
 ## Author: Bryan Jurish <moocow@ling.uni-potsdam.de>
 ## Description: Aho-Corasick pattern matcher
 
-
 package Lingua::LTS::ACPM;
 use Lingua::LTS::Trie;
 use strict;
@@ -210,26 +209,38 @@ sub matches {
 ## Methods: Export: Gfsm
 ##==============================================================================
 
-## $labs = $acpm->gfsmArcLabels()
-## $labs = $acpm->gfsmArcLabels($labs)
-sub gfsmArcLabels {
+## $labs = $acpm->gfsmInputLabels()
+## $labs = $acpm->gfsmInputLabels($labs)
+sub gfsmInputLabels {
   my ($acpm,$labs) = @_;
-  $labs = $acpm->SUPER::gfsmArcLabels($labs);
+  $labs = $acpm->SUPER::gfsmInputLabels($labs);
   $labs->insert($acpm->{failstr});
   return $labs;
 }
 
-## $labs = $acpm->gfsmStateLabels(?$labs)
+## $olabs = $trie->gfsmOutputLabels()
+## $olabs = $trie->gfsmOutputLabels($labs,%args)
+##  + output alphabet
+##  + %args:
+##     out2str => \&$sub #-- get key for output; default none (id)
 #->inherited
 
-## $gfsmTrie = $acpm->gfsmTrie()
-## $gfsmTrie = $acpm->gfsmTrie($arcLabels)
-## $gfsmTrie = $acpm->gfsmTrie($arcLabels,$gfsmTrie)
-sub gfsmTrie {
-  my ($acpm,$labs,$fsm) = @_;
-  $labs = $acpm->gfsmArcLabels() if (!defined($labs));
-  $fsm  = Gfsm::Automaton->newTrie if (!defined($fsm));
-  $fsm->is_transducer(1);
+## $labs = $acpm->gfsmStateLabels(?$labs,%args)
+##  + state alphabet
+##  + %args:
+##     out2str => \&sub ##-- called as $sub->($out_or_undef) : default: stringify
+#->inherited
+
+## $gfsmDFA = $acpm->gfsmAutomaton(%args)
+##  + %args:
+##     fsm=>$fsm,            ##-- output automaton
+##     ilabels =>$inLabels,  ##-- default: $trie->gfsmInputLabels()
+##     dosort=>$bool,        ##-- sort automaton? (default=yes)
+sub gfsmAutomaton {
+  my ($acpm,%args) = @_;
+  my $ilabs = defined($args{ilabels})  ? $args{ilabels} : $acpm->gfsmInputLabels();
+  my $fsm   = defined($args{fsm})      ? $args{fsm}     : Gfsm::Automaton->newTrie();
+  $fsm->is_transducer(0);
   $fsm->is_weighted(0);
   $fsm->root(0);
   my ($q,$qah,$a,$qto);
@@ -237,27 +248,39 @@ sub gfsmTrie {
     ##-- goto
     if (defined($qah = $acpm->{goto}[$q])) {
       while (($a,$qto)=each(%$qah)) {
-	$fsm->add_arc($q,$qto, $labs->get_label($a),Gfsm::epsilon(), 0);
+	$fsm->add_arc($q,$qto, $ilabs->get_label($a),Gfsm::epsilon(), 0);
       }
     }
     ##-- fail
     if (defined($qto = $acpm->{fail}[$q])) {
-      $fsm->add_arc($q,$qto, Gfsm::epsilon(),$labs->get_label($acpm->{failstr}), 0);
+      $fsm->add_arc($q,$qto, $ilabs->get_label($acpm->{failstr}),Gfsm::epsilon(), 0);
     }
     ##-- output
     if (exists($acpm->{out}{$q})) {
       $fsm->is_final($q,1);
     }
   }
-  $fsm->arcsort(Gfsm::ASMLower());
+  $fsm->arcsort(Gfsm::ASMLower()) if ($args{dosort} || !exists($args{dosort}));
   return $fsm;
 }
+
+## $gfsmFST = $trie->gfsmTransducer(%args)
+##  + %args:
+##     fsm=>$fsm,            ##-- output automaton
+##     ilabels =>$inLabels,  ##-- default: $trie->gfsmInputLabels()
+##     olabels =>$outLabels, ##-- default: $trie->gfsmOutputLabels()
+##     dosort=>$bool,        ##-- sort automaton? (default=yes)
+#-> INHERITED from Trie
+
 
 ##==============================================================================
 ## Methods: Debug: View
 ##==============================================================================
 
 ## undef = $acpm->viewps(%options)
+#->inherited
+
+## undef = $acpm->viewfst(%options)
 #->inherited
 
 1;

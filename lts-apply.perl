@@ -117,7 +117,7 @@ if ($do_expand || $do_index || $do_gindex) {
 
       print STDERR "$0: generating GFSM index... ";
       $lts->{glabs} = $lts->{acpm}->gfsmArcLabels();
-      $lts->{gacpm} = $lts->{acpm}->gfsmTrie($lts->{glabs});
+      $lts->{gacpm} = $lts->{acpm}->gfsmAutomaton($lts->{glabs});
       print STDERR "done.\n";
     }
   }
