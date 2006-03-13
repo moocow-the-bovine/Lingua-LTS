@@ -116,8 +116,8 @@ if ($do_expand || $do_index || $do_gindex) {
       print STDERR "done.\n";
 
       print STDERR "$0: generating GFSM index... ";
-      $lts->{glabs} = $lts->{acpm}->gfsmArcLabels();
-      $lts->{gacpm} = $lts->{acpm}->gfsmAutomaton($lts->{glabs});
+      $lts->{glabs} = $lts->{acpm}->gfsmInputLabels();
+      $lts->{gacpm} = $lts->{acpm}->gfsmAutomaton(ilabels=>$lts->{glabs});
       print STDERR "done.\n";
     }
   }
@@ -131,11 +131,13 @@ if ($input_words) {
   lts_apply_word($lts,$_) foreach (@ARGV);
   $ntoks = @ARGV;
 } else {
+  print STDERR "$0: processing... ";
   while (<>) {
     chomp;
     lts_apply_word($lts,$_);
     ++$ntoks;
   }
+  print STDERR "done.\n";
 }
 
 $outfh->close;
@@ -143,7 +145,7 @@ $outfh->close;
 ##-- summary
 my $elapsed = tv_interval($tv_started, [gettimeofday]);
 print STDERR
-  sprintf("$0: Processed %d tokens in %.2f secs: %.2f tok/sec\n",
+  sprintf("$0: processed %d tokens in %.2f secs: %.2f tok/sec\n",
 	  $ntoks, $elapsed, ($elapsed ? $ntoks/$elapsed : -1));
 
 

@@ -365,8 +365,8 @@ sub toAutomaton {
 ##     complete=>$bool  # complete the ACPM
 ##  + requires: expand_rules(), expand_alphabet()
 ##  + populates: $lts->{acpm}
-*compile_acpm = \&toACPM;
-sub toACPM {
+*compile_acpm = *toACPM = \&toACPM_0;
+sub toACPM_0 {
   my ($lts,%args) = @_;
 
   ##-- step 1: generate trie
@@ -383,14 +383,14 @@ sub toACPM {
   }
 
   ##-- step 2: generate ACPM
-  my $acpm = $lts->{acpm} = Lingua::LTS::ACPM->newFromTrie($trie,joinout=>\&_acpm_joinout);
+  my $acpm = $lts->{acpm} = Lingua::LTS::ACPM->newFromTrie($trie,joinout=>\&_acpm_joinout_0);
   $acpm->complete() if ($args{complete});
 
   return $acpm;
 }
 
-## \%idhash = _acpm_joinout($hash1_or_undef, $hash2_or_undef)
-sub _acpm_joinout {
+## \%idhash = _acpm_joinout_0($hash1_or_undef, $hash2_or_undef)
+sub _acpm_joinout_0 {
   if (defined($_[0])) {
     @{$_[0]}{keys %{$_[1]}} = undef if (defined($_[1]));
     return $_[0];
@@ -402,7 +402,7 @@ sub _acpm_joinout {
 ##   + requires: $lts->expand_alphabet()
 sub gfsmLabels {
   my $lts = shift;
-  my $labs = Gfsm::Labels->new;
+  my $labs = Gfsm::Alphabet->new;
   $labs->insert($_) foreach ('<epsilon>', map { sort keys %$_ } @$lts{qw(specials letters phones)});
   return $labs;
 }
@@ -417,7 +417,7 @@ sub gfsmSymbols {
 }
 
 ## $gfsmFST = $lts->gfsmFST(%args)
-##  + requires: $lts->{acpm} (complete)
+##  + requires: $lts->{acpm} (NOT complete)
 ##  + %args:
 ##     ilabels=>$ilabs, ##-- default = $lts->gfsmLabels()
 ##     olabels=>$olabs, ##-- default = $ilabs
@@ -427,29 +427,40 @@ sub gfsmTransducer {
   my $olabs = $args{olabels} ? $args{olabels} : $ilabs;
   my $acpm  = $lts->{acpm};
   my $goto  = $acpm->{goto};
+  my $rgoto = $acpm->{rgoto};
   my $fst   = $acpm->gfsmAutomaton(ilabels=>$ilabs,dosort=>0);
 
   ##-- Init: build reverse-arc index for ACPM arcs
-  my @Q = (0..($acpm->{nq}-1));
-  my $rdelta = []; ##-- $qto=>{$a=>$qfrom,...}
-  my ($q,$a,$qto);
-  foreach $q (@Q) {
-    while (($a,$qto)=each(%{$goto->[$q]})) {                   ##-- reverse arc-index
-      $rdelta->[$qto]{$a} = $q;
-    }
-  }
+  #my @Q = (0..($acpm->{nq}-1));
+  #my $rdelta = []; ##-- $qto=>{$a=>$qfrom,...}
+  #my ($q,$a,$qto);
+  #foreach $q (@Q) {
+  #  while (($a,$qto)=each(%{$goto->[$q]})) {                   ##-- reverse arc-index
+  #    $rdelta->[$qto]{$a} = $q;
+  #  }
+  #}
 
   ##-- Phase 1:
   ##    + map output rules to the states at which they would apply,
   ##      factoring out input and right-hand side
-  my $rul2q = []; ##-- $rulid=>{$q=>undef,....}
+
+  ##-- ##$q=>{ "${rulid}:${n_read}/${n_lhs},${n_lhs_in},${n_lhs_in_rhs}" }
+  ##-- $q=>{ pack('LS4', ${rulid}, ${n_read}, ${n_lhs} ${n_lhs_in} ${n_lhs_in_rhs}), ... }
+  my $q2rulpos = $lts->{q2rulpos} = [];
   my $rules = $lts->{rules};
-  my ($qout,$rulid,$rul,$rhslen);
+  my ($q,$qout,$rulid,$rul, $lenL,$lenLI,$lenLIR,$nread,$r);
   while (($q,$qout)=each(%{$acpm->{out}})) {
     foreach $rulid (keys %$qout) {
-      $rul = $rules->[$rulid];
-      $rhslen = @{$rul->{in}} + @{$rul->{rhs}} - 1;
-      ##-- ARGH: CONTINUE HERE!
+      $rul    = $rules->[$rulid];
+      $lenL   = @{$rul->{lhs}};
+      $lenLI  = $lenL + @{$rul->{in}};
+      $lenLIR = $lenLI + @{$rul->{rhs}};
+
+      ##-- back up
+      for ($nread=$lenLIR, $r=$q; $nread > 0 && defined($r); $nread--) {
+	$q2rulpos->[$r]{pack('LS4', $rulid,$nread,$lenL,$lenLI,$lenLIR)} = undef;
+	$r = (split(/ /,$rgoto->[$r]))[0];
+      }
     }
   }
 

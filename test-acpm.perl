@@ -55,6 +55,10 @@ sub testltsx {
 
 ##--------------------------------------------------------------
 ## Test sets: LTS files
+
+sub testltstest { testltsx('test.lts'); }
+sub testltstestx { testltsx('test.lts'); }
+
 sub testims   { testlts('lts-ims-german.lts'); }
 sub testimsx  { testltsx('lts-ims-german.lts'); }
 sub testims2  { testlts('lts-ims-german-2.lts'); }
@@ -64,6 +68,11 @@ sub testims2x { testltsx('lts-ims-german-2.lts'); }
 ## Debug: FSM Viewing
 
 BEGIN { our %fstargs = (out2str=>\&out2str_ruleids); }
+
+sub viewfsm {
+  my $fsm = shift;
+  $fsm->viewps(bg=>1,states=>$qlabs_p,@_);
+}
 
 sub viewtrie    { $trie->viewps(bg=>1,states=>$tqlabs_d,title=>'Trie',@_); }
 sub viewtriefst { $trie->viewfst(bg=>1,states=>$tqlabs_p,%fstargs,title=>'Trie/FST',@_); }
@@ -105,10 +114,79 @@ sub gentrie {
 ## Utilities
 sub out2str_ruleids {
   return (defined($_[0])
-	  ? ('='.join('|',
-		      map { rule2str($rules[$_]) }
-		      sort { $a<=>$b } keys(%{$_[0]})))
+	  ? ('\\n= '
+	     .join('\\n| ',
+		   map { rule2str($rules[$_]) }
+		   sort { $a<=>$b } keys(%{$_[0]})))
 	  : '');
+}
+
+sub out2str_rulepos {
+  if (defined($_[0])) {
+    my @rulpos   = keys %{$_[0]};
+    my ($rp,$rulid,$lenL,$lenLI,$lenLIR, $matchBegin,$matchEnd,$matchid);
+    my %match2rp = qw();
+    foreach $rp (@rulpos) {
+      ($rulid,$nread,$lenL,$lenLI,$lenLIR) = unpack('LS4', $rp);
+      $matchBegin = $lenL-$nread;
+      $matchEnd   = $lenLI-$nread;
+      $matchBuf   = $lenLIR-$nread;
+      $matchid = pack('sss',$matchBegin,$matchEnd,$matchBuf);
+      if (!exists($match2rp{$matchid}) || $match2rp{$matchid}{rulid} > $rulid) {
+	$match2rp{$matchid} = {rulid=>$rulid,
+			       nread=>$nread,
+			       lenL=>$lenL,
+			       lenLI=>$lenLI,
+			       lenLIR=>$lenLIR,
+			       matchBegin=>$matchBegin,
+			       matchEnd=>$matchEnd,
+			       matchBuf=>$matchBuf,
+			      };
+      }
+    }
+    my ($m1id,$m2id,$m1,$m2);
+    ##-- eliminate overlap
+    foreach $m1id (keys(%match2rp)) {
+      next if (!defined($m1=$match2rp{$m1id}));
+      foreach $m2id (keys(%match2rp)) {
+	$m2 = $match2rp{$m2id};
+	next if ($m1 eq $m2 || $m1->{matchBuf} > 0 || $m2->{matchBuf} > 0);
+	if ($m1->{rulid} < $m2->{rulid}
+	    && $m1->{matchBegin} < $m2->{matchBegin}
+	    && $m1->{matchEnd} > $m2->{matchBegin})
+	  {
+	    delete($match2rp{$m2id});
+	  }
+      }
+    }
+
+    my ($match,$rul,@rsyms);
+    return ('\\n= '
+	    .join('\\n| ',
+		  map {
+		    $match = $match2rp{$_};
+		    $rul   = $rules[$match->{rulid}];
+		    @rsyms = (@{$rul->{lhs}},@{$rul->{in}},@{$rul->{rhs}});
+		    @rsyms[$match->{nread}-1] .= "_";
+		    splice(@rsyms, $match->{lenLI}, 0, ':', @{$rul->{out}}, ']');
+		    splice(@rsyms, $match->{lenL},  0, '[');
+		    (''
+		     ." ~ "
+		     #.$match->{nread}."/"
+		     ."{$match->{matchBegin}..$match->{matchEnd}($match->{matchBuf})} -> "
+		     ."$rul->{id} : "
+		     .join('', @rsyms)
+		     #.join(',', @$match{qw(lenL lenLI lenLIR)})
+		     )
+		  } sort {
+		    @al=unpack('s3',$a);
+		    @bl=unpack('s3',$b);
+		    ($al[0] <=> $bl[0]
+		     || $al[1] <=> $bl[1]
+		     || $al[2] <=> $bl[2])
+		  } keys(%match2rp)));
+  }
+  return '';
 }
 
 
@@ -137,6 +215,30 @@ sub genacpm {
   our $qlabs_d = $acpm->gfsmStateLabels(undef,out2str=>\&out2str_ruleids);
   our $qlabs_p = $acpm->gfsmStateLabels(undef,out2str=>undef);
 }
+
+##--------------------------------------------------------------
+## generate a gfsm transducer
+sub lts2fst {
+  our $acpm = $lts->toACPM();
+  our $qlabs_d = $acpm->gfsmStateLabels(undef,out2str=>\&out2str_ruleids);
+  our $qlabs_p = $acpm->gfsmStateLabels(undef,out2str=>undef);
+
+  our $iolabs = $lts->gfsmLabels();
+  our $fst    = $lts->gfsmTransducer(ilabels=>$iolabs,olabels=>$iolabs);
+
+  our $acpm1       = $acpm->clone;
+  $acpm1->{out}{$_} = $lts->{q2rulpos}[$_] foreach (0..$#{$lts->{q2rulpos}});
+  our $qlabs_rp    = $acpm1->gfsmStateLabels(undef,out2str=>\&out2str_rulepos);
+
+  #viewfsm($fst,labels=>$iolabs,states=>$qlabs_rp,title=>'LTS->FST');
+  $acpm1->viewps(bg=>1,states=>$qlabs_rp,title=>"ACPM_1");
+
+  our $acpm1c = $acpm1->clone->complete;
+  $acpm1c->viewps(bg=>1,states=>$qlabs_rp,title=>"ACPM_1 (complete)");
+}
+testltstestx;
+lts2fst;
+
 
 ##--------------------------------------------------------------
 ## DEBUG: rule to string
@@ -192,15 +294,17 @@ sub lkptest {
   $out = join(' ', @out);
   print "lts($str) = $out\n";
 }
-test1;
-genacpm;
-#lkptest('ababbab');
-lkptest('babbab');
+#test1;
+#genacpm;
+##lkptest('ababbab');
+#lkptest('babbab');
 ##--
 #testims2x;
 #genacpm;
 ##lkptest('#schied#');
 #lkptest('#unterschied#');
+
+#
 
 ##--- main: dummy
 foreach $i (0..5) {
