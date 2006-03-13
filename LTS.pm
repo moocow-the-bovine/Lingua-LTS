@@ -194,7 +194,7 @@ sub print_symbols_lines {
 sub symbols_lines {
   my ($lts,$class,$syms) = @_;
   my @lines = qw();
-  my ($line)
+  my ($line);
   while (@$syms) {
     $line = "$class\t";
     while (@$syms && length($line) + length($syms->[0]) < 80) {
