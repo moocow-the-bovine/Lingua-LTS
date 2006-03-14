@@ -49,7 +49,7 @@ sub new {
 sub clone {
   my $trie = shift;
   require Storable;
-  return Storable::dclone($trie);
+  return bless Storable::dclone($trie), ref($trie)||$trie;
 }
 
 ##==============================================================================
@@ -262,6 +262,16 @@ sub viewps {
   $fsm->viewps(labels=>$ilabs,states=>$qlabs,%args);
 }
 
+## undef = $trie->drawDot($dotfile,%options)
+sub drawDot {
+  my ($trie,$dotfile,%args) = @_;
+  my $qlabs = exists($args{states}) ? exists($args{states}) : $trie->gfsmStateLabels(undef,%args);
+  my $ilabs = exists($args{labels}) ? exists($args{labels}) : $trie->gfsmInputLabels(undef,%args);
+  my $fsm   = $args{fsm}    ? $args{fsm}    : $trie->gfsmAutomaton(ilabels=>$ilabs);
+  $fsm->draw_dot($dotfile,labels=>$ilabs,states=>$qlabs,%args);
+}
+
+
 ## undef = $trie->viewfst(%options)
 sub viewfst {
   my ($trie,%args) = @_;
@@ -270,6 +280,16 @@ sub viewfst {
   my $olabs = exists($args{olabels}) ? $args{olabels} : $trie->gfsmOutputLabels(undef,%args);
   my $fsm   = $args{fsm} ? $args{fsm} : $trie->gfsmTransducer(ilabels=>$ilabs,olabels=>$olabs,%args);
   $fsm->viewps(lower=>$ilabs,upper=>$olabs,states=>$qlabs,%args);
+}
+
+## undef = $trie->fstDot($dotfile,%options)
+sub fstDot {
+  my ($trie,$dotfile,%args) = @_;
+  my $qlabs = exists($args{states})  ? $args{states}  : $trie->gfsmStateLabels(undef,%args);
+  my $ilabs = exists($args{ilabels}) ? $args{ilabels} : $trie->gfsmInputLabels(undef,%args);
+  my $olabs = exists($args{olabels}) ? $args{olabels} : $trie->gfsmOutputLabels(undef,%args);
+  my $fsm   = $args{fsm} ? $args{fsm} : $trie->gfsmTransducer(ilabels=>$ilabs,olabels=>$olabs,%args);
+  $fsm->draw_dot($dotfile,lower=>$ilabs,upper=>$olabs,states=>$qlabs,%args);
 }
 
 1;

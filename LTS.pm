@@ -19,7 +19,7 @@ use Carp;
 our $VERSION = 0.02;
 
 ##-- always specials
-our @SPECIALS = ('=<epsilon>', '#');
+our @SPECIALS = ('#');
 our %SPECIALS = (map { $_=>undef } @SPECIALS);
 
 ##==============================================================================
@@ -157,16 +157,8 @@ sub save_symbols {
 					 ]);
   $fh->print("\n");
 
-  ##-- print letters [history]
-  $lts->print_symbols_lines($fh,'History',[map { "-$_" } sort(keys(%{$lts->{letters}}))]);
-  $fh->print("\n");
-
   ##-- print phones (temporary)
-  $lts->print_symbols_lines($fh,'Phon',   [map { "=$_" } sort(keys(%{$lts->{phones}}))]);
-  $fh->print("\n");
-
-  ##-- print phones (output)
-  $lts->print_symbols_lines($fh,'PhonOut',[              sort(keys(%{$lts->{phones}}))]);
+  $lts->print_symbols_lines($fh,'Phon',   [map { $_ } sort(keys(%{$lts->{phones}}))]);
   $fh->print("\n");
 
   ##-- print classes
@@ -174,8 +166,6 @@ sub save_symbols {
   my ($c);
   foreach $c (sort(keys(%$classes))) {
     $lts->print_symbols_lines($fh,"Class$c", [              sort(keys(%{$classes->{$c}}))]);
-    $fh->print("\n");
-    $lts->print_symbols_lines($fh,"-Class$c",[map { "-$_" } sort(keys(%{$classes->{$c}}))]);
     $fh->print("\n");
   }
   $fh->print("\n");
@@ -205,157 +195,6 @@ sub symbols_lines {
   return @lines;
 }
 
-
-
-##--------------------------------------------------------------
-## Methods: I/O: Output: AT&T context-sensitive rewrite rules
-
-## undef = $lts->to_csrules($filename_or_fh)
-
-##------ STILL BUGGY!
-
-##------ PROBLEM (solved, old):
-##ex LTS:
-##
-## a [ a ] = B
-##   [ a ] = A
-##
-##--> rules
-##
-## a -> B / a __
-## a -> A / __
-##
-##--> BUT:
-##
-## lookup('a')   => 'A'   # ok
-## lookup('aa')  => 'AB'  # ok
-## lookup('aaa') => 'ABA' # NOT ok
-##
-## SOLUTION (?): add 'simultaneous' keyword!
-
-sub to_csrules {
-  my ($lts,$file) = @_;
-  my $fh = ref($file) ? $file : IO::File->new(">$file");
-  croak(__PACKAGE__, "::to_csrules(): open failed for '$file': $!") if (!$fh);
-
-  ##-- print lexrulecomp compiler options
-  $fh->print("simultaneous\n", "obligatory\n", "\n");
-
-  my $rules = $lts->{rules};
-  my ($r,$ii);
-  my $i = 1;
-
-  foreach $ii (
-	      sort {
-		(@{$rules->[$b]{in}} <=> @{$rules->[$a]{in}}      ##-- length(r->IN), descending
-		 || @{$rules->[$b]{lhs}} <=> @{$rules->[$a]{lhs}} ##-- length(r->LHS), descending
-		 || @{$rules->[$b]{rhs}} <=> @{$rules->[$a]{rhs}} ##-- length(r->RHS), descending
-		 || $a <=> $b)                                    ##-- index(r->INDEX), ascending
-	      } (0..$#$rules)
-	     )
-    {
-      $r = $rules->[$ii];
-      $lts->print_csrule_line_x($fh, @$r{qw(lhs in out rhs)}, "RULE ".($i++)." [$ii]: ".rule2strNS($r));
-    }
-
-  $fh->close if (!ref($file));
-  return $lts;
-}
-
-## undef = print_csrule_line_x($fh,\@left,\@in,\@out,\@right,@comments)
-sub print_csrule_line_x {
-  my ($lts,$fh,$lc,$in,$out,$rc,@comments) = @_;
-  my ($lenPhi,$lenPsi,$lenL,$lenR) = (8,16,16,16);
-  $fh->print(
-	     sprintf("%${lenPhi}s -> %-${lenPsi}s / %${lenL}s __ %-${lenR}s %s\n",
-	     #sprintf("%s -> %s / %s __ %s   %s\n",
-		     ##-- input (target: Phi)
-		     join('', map { $lts->att_str($_) } @$in),
-
-		     ##-- output (target: Psi)
-		     join('',
-			  ##-- output: history
-			  (map { $lts->att_str($_,'-') } @$in),
-			  ##-- output: phones
-			  (map { $lts->att_str($_,'=') } @$out),
-			 ),
-
-		     ##-- left context (history)
-		     join('',
-			  map { ($lts->att_str((exists($lts->{classes}{$_}) ? "Class$_" : $_),
-					       '-'), ##-- history
-				 '([Phon]*)')
-			       } @$lc),
-
-		     ##-- right context
-		     join('',
-			  map { ($lts->att_str((exists($lts->{classes}{$_}) ? "Class$_" : $_),
-					       ''), ##-- no history
-				 '([Phon]*)')
-			       } @$rc),
-
-		     ##-- comments
-		     (@comments ? join('','# ', @comments) : ''),
-		    )
-	    );
-}
-
-
-## $str = $lts->att_str($symbol)
-## $str = $lts->att_str($symbol,$prefix)
-##  + returns AT&T-safe symbol string (with prefix "$prefix"),
-##    honoring no-prefix convention for specials
-sub att_str {
-  my ($lts,$str,$prefix) = @_;
-  return !$prefix || exists($lts->{specials}{$str}) ? _att_safe_str($str) : "[${prefix}${str}]";
-}
-
-## $str = _att_safe_str($symbol)
-##  + lex-safe symbol
-sub _att_safe_str {
-  my $sym = shift;
-  return "[<epsilon>]" if (length($sym)==0);
-  return "[$sym]"      if (length($sym) > 1);
-  return ("\\".$sym)   if ($sym =~ /[\#\+\*\-\^\@\:\[\]]/);
-  return $sym;
-}
-
-##==============================================================================
-## Methods: index generation
-##==============================================================================
-
-## $automaton = $lts->toAutomaton()
-## $automaton = $lts->toAutomaton($automaton)
-##   + requires: expand_alphabet(), expand_rules()
-##   + INCOMPLETE
-sub toAutomaton {
-  my ($lts,$fst) = @_;
-  $fst = Lingua::LTS::Automaton->new() if (!$fst);
-  @$fst{qw(specials letters phones)} = @$lts{qw(specials letters phones)};
-
-  ##-- get all input symbols
-  my @ltrs = ('#', keys(%{$lts->{letters}}));
-
-  ##-- generate automaton: step1: trie
-  my $rulex = $lts->{rulex};
-  #my $qid2dot = {};
-  my $qid;
-  my ($r);
-  foreach $r (@$rulex) {
-    #$qid = $fst->addString(join('', @{$r->{lhs}}, @{$r->{in}}, @{$r->{rhs}}));
-    #$qid2dot->{$qid} = @{$r->{lhs}} + @{$r->{in}};
-    $fst->addRule(@$r{qw(lhs in out rhs)});
-  }
-
-  ##-- @queue: potential contexts to be investigated:
-  ##   @queue = ( $potential_context_1, ..., $potential_context_n )
-  #my @queue = ($lts->{implicit_bos} ? '#' : '');
-  #my ($ctx);
-  #while (defined($ctx=shift(@queue))) { ???; }
-
-  return $fst;
-}
-
 ##==============================================================================
 ## Methods: index generation: ACPM
 ##==============================================================================
@@ -365,8 +204,8 @@ sub toAutomaton {
 ##     complete=>$bool  # complete the ACPM
 ##  + requires: expand_rules(), expand_alphabet()
 ##  + populates: $lts->{acpm}
-*compile_acpm = *toACPM = \&toACPM_0;
-sub toACPM_0 {
+*compile_acpm = *toACPM;
+sub toACPM {
   my ($lts,%args) = @_;
 
   ##-- step 1: generate trie
@@ -383,14 +222,14 @@ sub toACPM_0 {
   }
 
   ##-- step 2: generate ACPM
-  my $acpm = $lts->{acpm} = Lingua::LTS::ACPM->newFromTrie($trie,joinout=>\&_acpm_joinout_0);
+  my $acpm = $lts->{acpm} = Lingua::LTS::ACPM->newFromTrie($trie,joinout=>\&_acpm_joinout);
   $acpm->complete() if ($args{complete});
 
   return $acpm;
 }
 
-## \%idhash = _acpm_joinout_0($hash1_or_undef, $hash2_or_undef)
-sub _acpm_joinout_0 {
+## \%idhash = _acpm_joinout($hash1_or_undef, $hash2_or_undef)
+sub _acpm_joinout {
   if (defined($_[0])) {
     @{$_[0]}{keys %{$_[1]}} = undef if (defined($_[1]));
     return $_[0];
@@ -409,7 +248,7 @@ sub gfsmLabels {
 
 ## @symLines = $lts->gfsmSymbolsLines()
 ##   + requires: $lts->expand_alphabet()
-sub gfsmSymbols {
+sub gfsmSymbolsLines {
   my $lts = shift;
   return ($lts->symbols_lines('Special', $lts->{specials}), "\n",
 	  $lts->symbols_lines('Letter', $lts->{letters}), "\n",
@@ -421,6 +260,7 @@ sub gfsmSymbols {
 ##  + %args:
 ##     ilabels=>$ilabs, ##-- default = $lts->gfsmLabels()
 ##     olabels=>$olabs, ##-- default = $ilabs
+*gfsmFST = \&gfsmTransducer;
 sub gfsmTransducer {
   my ($lts,%args) = @_;
   my $ilabs = $args{ilabels} ? $args{ilabels} : $lts->gfsmLabels();
@@ -428,24 +268,16 @@ sub gfsmTransducer {
   my $acpm  = $lts->{acpm};
   my $goto  = $acpm->{goto};
   my $rgoto = $acpm->{rgoto};
-  my $fst   = $acpm->gfsmAutomaton(ilabels=>$ilabs,dosort=>0);
 
-  ##-- Init: build reverse-arc index for ACPM arcs
-  #my @Q = (0..($acpm->{nq}-1));
-  #my $rdelta = []; ##-- $qto=>{$a=>$qfrom,...}
-  #my ($q,$a,$qto);
-  #foreach $q (@Q) {
-  #  while (($a,$qto)=each(%{$goto->[$q]})) {                   ##-- reverse arc-index
-  #    $rdelta->[$qto]{$a} = $q;
-  #  }
-  #}
+  print STDERR (ref($lts), "::gfsmTransducer(): mapping output rules to states (backward)... ")
+    if ($args{verbose});
 
   ##-- Phase 1:
   ##    + map output rules to the states at which they would apply,
   ##      factoring out input and right-hand side
 
-  ##-- ##$q=>{ "${rulid}:${n_read}/${n_lhs},${n_lhs_in},${n_lhs_in_rhs}" }
-  ##-- $q=>{ pack('LS4', ${rulid}, ${n_read}, ${n_lhs} ${n_lhs_in} ${n_lhs_in_rhs}), ... }
+  ##-- $q=>{ pack('S4L', ${in_begin}, ${in_end}, ${rhs_end}, ${nread}, ${rulid}), ... }
+  ##   + all positions are encoded as substr() indices in address($q)
   my $q2rulpos = $lts->{q2rulpos} = [];
   my $rules = $lts->{rules};
   my ($q,$qout,$rulid,$rul, $lenL,$lenLI,$lenLIR,$nread,$r);
@@ -456,14 +288,191 @@ sub gfsmTransducer {
       $lenLI  = $lenL + @{$rul->{in}};
       $lenLIR = $lenLI + @{$rul->{rhs}};
 
-      ##-- back up
+      ##-- back up, adopting backwards
       for ($nread=$lenLIR, $r=$q; $nread > 0 && defined($r); $nread--) {
-	$q2rulpos->[$r]{pack('LS4', $rulid,$nread,$lenL,$lenLI,$lenLIR)} = undef;
+	$q2rulpos->[$r]{pack('S4L', $lenL, $lenLI, $lenLIR, $nread, $rulid)} = undef;
 	$r = (split(/ /,$rgoto->[$r]))[0];
       }
     }
   }
 
+  print STDERR ("done.\n",
+		ref($lts), "::gfsmTransducer(): eliminating overlap & inheriting forward... ")
+    if ($args{verbose});
+
+  ##-- Phase 2:
+  ##    + eliminate redundant rules (overlap)
+  ##    + inherit *completed* rules from $q to $qto on ($q --$c--> $qto)
+  my @fifo = (0);
+  my ($rp,$c,$qto, @rps);
+  my ($rpi1,$lenL1,$lenLI1,$lenLIR1,$nread1,$rulid1,$begin1,$end1);
+  my ($rpi2,$lenL2,$lenLI2,$lenLIR2,$nread2,$rulid2,$begin2,$end2);
+  while (defined($q=shift(@fifo))) {
+    ##-- eliminate redundant rules (overlap) in $q2rulpos
+    @rps = defined($q2rulpos->[$q]) ? keys(%{$q2rulpos->[$q]}) : qw();
+    foreach $rpi1 (1..$#rps) {
+      ($lenL1,$lenLI1,$lenLIR1,$nread1,$rulid1) = unpack('S4L', $rps[$rpi1]);
+      next if ($nread1 < $lenLIR1);   ##-- unfinished: keep it
+      ($begin1,$end1) = ($lenL1-$nread1, $lenLI1-$nread1);
+      foreach $rpi2 (0..($rpi1-1)) {
+	($lenL2,$lenLI2,$lenLIR2,$nread2,$rulid2) = unpack('S4L', $rps[$rpi2]);
+	next if ($nread2 < $lenLIR2); ##-- unfinished: keep it
+	($begin2,$end2) = ($lenL2-$nread2, $lenLI2-$nread2);
+	if    ($rulid1 < $rulid2 && $begin1 <= $begin2 && $end1 > $begin2) {
+	  delete($q2rulpos->[$q]{$rps[$rpi2]});
+	}
+	elsif ($rulid2 < $rulid1 && $begin2 <= $begin1 && $end2 > $begin1) {
+	  delete($q2rulpos->[$q]{$rps[$rpi1]});
+	}
+      }
+    }
+    @rps = keys(%{$q2rulpos->[$q]}) if (@rps);
+
+    ##-- process daughter states ($q --$c--> $qto)
+    while (($c,$qto)=each(%{$goto->[$q]})) {
+      push(@fifo,$qto) if ($qto != 0);
+      ##-- adopt completed rules forward from $q to $qto: buffer output
+      foreach $rp (@rps) {
+	($lenL,$lenLI,$lenLIR,$nread,$rulid) = unpack('S4L', $rp);
+	next if ($nread < $lenLIR); ##-- don't adopt incomplete rules
+	$q2rulpos->[$qto]{pack('S4L', $lenL,$lenLI,$lenLIR,$nread+1,$rulid)} = undef;
+      }
+    }
+  }
+
+  print STDERR ("done.\n",
+		ref($lts), "::gfsmTransducer(): completing delta()...\n")
+    if ($args{verbose});
+
+  ##-- Phase 3
+  ##    + complete goto()
+  ##      struct: $delta->[$q] = { $c=>join(' ', $qto, @output), ... }
+  ##
+  my $delta = [];
+  my $outF  = []; ##-- $outF->[$q] => @output_on_eos
+  my @chars = keys(%{$acpm->{chars}});
+  push(@chars, '#')
+    if (!exists($acpm->{chars}{'#'}) && ($lts->{implicit_bos} || $lts->{implicit_eos}));
+  my $fail = $acpm->{fail};
+  my ($gotoq,$deltaq, @qrps, $rp1,$rp2, $q2,$goto_qc,@rps_qc,@out_qc);
+  my $nQ=0;
+  foreach $q (0..($acpm->{nq}-1)) {
+    print STDERR '.' if ($args{verbose} && $nQ++ % 1000 == 0);
+
+    ##-- input arcs: $q --a:eps--> $goto->[$q]{$a}
+    $gotoq  = $goto->[$q];
+    $deltaq = $delta->[$q] = { map { $_=>$gotoq->{$_} } keys(%$gotoq) };
+
+    ##-- get safe output for $q
+    @qrps = map {
+      ($lenL1,$lenLI1,$lenLIR1,$nread1,$rulid1) = unpack('S4L', $_);
+      ($nread1 >= $lenLIR1
+       ? {
+	  lenL=>$lenL1,
+	  lenLI=>$lenLI1,
+	  lenLIR=>$lenLIR1,
+	  nread=>$nread1+1,
+	  rulid=>$rulid1,
+	  begin=>($lenL1-$nread1-1),
+	  end=>($lenLI1-$nread1-1),
+	 }
+       : qw())
+    } keys(%{$q2rulpos->[$q]});
+
+    $outF->[$q] = [
+		   map { @{$lts->{rules}[$_->{rulid}]{out}} }
+		   sort { $a->{begin} <=> $b->{begin} } @qrps
+		  ];
+
+    ##-- failure arcs: $q --eps:$out_qc--> $q2 --$c:eps--> $goto->[$q2]{$c}=$goto_qc
+    foreach $c (grep { !exists($deltaq->{$_}) } @chars) {
+      $q2 = $fail->[$q];
+      $q2 = $fail->[$q2] while (!defined($goto_qc=$goto->[$q2]{$c}));
+
+      ##-- get allowable configurations @rps_qc for $q --$c:???--> $q2
+      @rps_qc = qw();
+    RP1:
+      foreach $rp1 (@qrps) {
+	foreach $rp2 (keys(%{$q2rulpos->[$goto_qc]})) {
+	  ($lenL2,$lenLI2,$lenLIR2,$nread2,$rulid2) = unpack('S4L', $rp2);
+	  next if ($nread2 < $lenLIR2); ##-- ignore incompletely read rules in fail sink state
+	  ($begin2,$end2) = ($lenL2-$nread2, $lenLI2-$nread2);
+	  next RP1 if ($rulid2 < $rp1->{rulid} && $begin2 <= $rp1->{begin} && $end2 > $rp1->{begin});
+	}
+	push(@rps_qc, $rp1);
+      }
+
+      ##-- get contiguous output for allowable configurations
+      @out_qc = map {
+	@{$lts->{rules}[$_->{rulid}]{out}}
+      } sort { $a->{begin} <=> $b->{begin} } @rps_qc;
+
+      ##-- mark output arc
+      $deltaq->{$c} = join(' ',$goto_qc,@out_qc);
+    }
+  }
+
+  print STDERR ("done.\n",
+		ref($lts), "::gfsmTransducer(): constructing FST... ")
+    if ($args{verbose});
+
+  ##-- Phase 4: FST construction
+  my $fst = Gfsm::Automaton->new();
+  $fst->is_transducer(1);
+  $fst->is_weighted(0);
+  $fst->root($fst->ensure_state(0));
+
+  ##-- add designated EOS state
+  my $qeos = $acpm->{nq};
+  my $qmax = $qeos;
+  if (!$lts->{implicit_eos}) {
+    $fst->add_state($qeos);
+    $fst->is_final($qeos,1);
+    ++$qmax;
+  }
+
+  ##-- add all states, arcs
+  my ($delta_qc, $i, $clab);
+  foreach $q (0..($acpm->{nq}-1)) {
+    ##-- add eos arcs: $q --eps:$outF[$q]--> $qeos
+    if (!$lts->{implicit_eos}) {
+      @out_qc = @{$outF->[$q]};
+      $fst->add_arc($q, ($#out_qc <= 0 ? $qeos                         : ($qmax++)),
+		    0,  ($#out_qc >= 0 ? $olabs->get_label($out_qc[0]) : 0),
+		    0);
+      foreach $i (1..$#out_qc) {
+	$fst->add_arc($qmax-1, ($i==$#out_qc ? $qeos : ($qmax++)),
+		      0,       $olabs->get_label($out_qc[$i]),
+		      0);
+      }
+    }
+
+    ##-- add arcs $q --$c:$out_qa--> $q2
+    $deltaq = $delta->[$q];
+    while (($c,$delta_qc)=each(%$deltaq)) {
+      ($qto,@out_qc) = split(/ /, $delta_qc);
+      $clab = $ilabs->get_label($c);
+
+      ##-- handle final states with implicit eos
+      $fst->is_final($qto, 1)
+	if ($c eq '#' && $lts->{implicit_eos});
+
+      ##-- handle other arcs
+      $fst->add_arc($q,    ($#out_qc <= 0 ? $qto                          : ($qmax++)),
+		    $clab, ($#out_qc >= 0 ? $olabs->get_label($out_qc[0]) : 0),
+		    0);
+      foreach $i (1..$#out_qc) {
+	$fst->add_arc($qmax-1, ($i==$#out_qc ? $qto : ($qmax++)),
+		      0,       $olabs->get_label($out_qc[$i]),
+		      0);
+      }
+    }
+  }
+
+  print STDERR "done.\n"
+    if ($args{verbose});
+
+  $fst->arcsort(Gfsm::ASMLower()) if ($args{dosort} || !exists($args{dosort}));
   return $fst;
 }
 
@@ -535,284 +544,6 @@ sub matches2phones {
   return @phones;
 }
 
-##==============================================================================
-## Methods: index generation: Gfsm
-##==============================================================================
-
-## undef = $lts->compile_tries()
-##  + requires: expand_rules(), expand_alphabet()
-##  + populates keys:
-##
-##     labs => $gfsmAlphabet,
-##     key2lab => $alphabetHash,
-##     lab2key => $alphabetArray,
-##
-##     lsta => $left_context_sta,
-##     rpta => $input_right_context_pta,
-##
-##     lsta2rules => { $qid_lsta=>pack('L*', sort{$a<=>$b} @rule_indices), ... }
-##     rpta2rules => { $qid_lsta=>pack('L*', sort{$a<=>$b} @rule_indices), ... }
-#use Gfsm;
-sub compile_tries0 {
-  my $lts = shift;
-  my $rulex = $lts->{rulex};
-  my $labs = $lts->{labs} = Gfsm::Alphabet->new;
-  my $lsta = $lts->{lsta} = Gfsm::Automaton->newTrie;
-  my $rpta = $lts->{rpta} = Gfsm::Automaton->newTrie;
-
-  ##-- populate labels
-  $labs->insert($_) foreach ('<epsilon>', '#',
-			     sort(keys(%{$lts->{letters}})),
-			     sort(keys(%{$lts->{phones}})),
-			    );
-  my $key2lab = $lts->{key2lab} = $labs->asHash;
-  my $lab2key = $lts->{lab2key} = $labs->asArray;
-
-  ##-- populate context PTAs
-  my ($ri,$xi,$r,$qids);
-
-  ##-- partial rules
-  my $lsta2partial = $lts->{lsta2partial} = [];
-  my $rpta2partial = $lts->{rpta2partial} = [];
-
-  ##-- full rules
-  my $lsta2full = $lts->{lsta2full} = {};
-  my $rpta2full = $lts->{rpta2full} = {};
-
-  foreach $xi (0..$#$rulex) {
-    $r  = $rulex->[$xi];
-    $ri = $r->{id};
-
-    ##-- left context
-    $qids = $lsta->add_path_states([reverse(@$key2lab{@{$r->{lhs}}})], [], 0.0, 0,0,1);
-    $lsta2partial->[$_] .= pack('L',$ri) foreach (@$qids);
-    $lsta2full->{$qids->[$#$qids]} .= pack('L',$ri);
-
-    ##-- right context
-    $qids = $rpta->add_path_states([@$key2lab{@{$r->{in}},@{$r->{rhs}}}], [], 0.0, 0,0,1);
-    $rpta2partial->[$_] .= pack('L',$ri) foreach (@$qids);
-    $rpta2full->{$qids->[$#$qids]} .= pack('L',$ri);
-  }
-
-  ##-- cleanup maps
-  my ($q,%ids);
-  foreach $q (0..$#$lsta2partial) {
-    next if (!defined($lsta2partial->[$q]));
-
-    %ids = map {$_=>undef} unpack('L*',$lsta2partial->[$q]);
-    $lsta2partial->[$q] = pack('L*', sort {$a<=>$b} keys %ids);
-
-    if (defined($lsta2full->{$q})) {
-      %ids = map {$_=>undef} unpack('L*',$lsta2full->{$q});
-      $lsta2full->{$q} = pack('L*', sort {$a<=>$b} keys %ids);
-    }
-  }
-  foreach $q (0..$#$rpta2partial) {
-    next if (!defined($rpta2partial->[$q]));
-
-    %ids = map {$_=>undef} unpack('L*',$rpta2partial->[$q]);
-    $rpta2partial->[$q] = pack('L*', sort {$a<=>$b} keys %ids);
-
-    if (defined($rpta2full->{$q})) {
-      %ids = map {$_=>undef} unpack('L*',$rpta2full->{$q});
-      $rpta2full->{$q} = pack('L*', sort {$a<=>$b} keys %ids);
-    }
-  }
-
-
-  ##-- sort index tries
-  $lsta->arcsort(Gfsm::ASMLower());
-  $rpta->arcsort(Gfsm::ASMLower());
-}
-
-##--------------------------------------------------------------
-## LTS: Indexed Application
-
-## @phones = $lts->apply_indexed($word)
-##  + get phones for string $word
-##  + requires: compile_tries()
-
-#*apply_indexed = *apply_word_indexed = \&apply_word_indexed_gfsm;
-sub apply_word_indexed_gfsm {
-  my ($lts,$word) = @_;
-  return $lts->apply_chars_indexed([
-				    ($lts->{implicit_bos} ? '#' : qw()),
-				    split(//,$word),
-				    ($lts->{implicit_eos} ? '#' : qw()),
-				   ],
-				   ($lts->{implicit_bos} ? 1 : 0));
-}
-
-## @phones = $lts->apply_chars_indexed($lts,\@word_chars,$initial_position)
-##  + get phones for word
-##  + requires: compile_tries()
-sub apply_chars_indexed_gfsm {
-  my ($lts,$wchars,$pos) = @_;
-  $pos = 0 if (!defined($pos));
-  my @wlabs = map {defined($_) ? $_ : $Gfsm::noLabel} @{$lts->{key2lab}}{@$wchars};
-
-  my (@phones, $qids_l,$lo_i_l, $qids_r,$lo_i_r, %ruleids,%ruleids_l, $ruli,$rul);
- CHAR:
-  while ($pos <= $#$wchars) {
-    if ($wchars->[$pos] eq '#') { ++$pos; next; } ##-- ignore BOS/EOS markers
-
-    ##-- get matching states
-    ($qids_r,$lo_i_r) = $lts->{rpta}->find_prefix_states([@wlabs[$pos..$#wlabs]],[]);
-    %ruleids   = map {$_=>undef} map {defined($_) ? unpack('L*', $_) : qw()} @{$lts->{rpta2full}}{@$qids_r};
-
-    ($qids_l,$lo_i_l) = $lts->{lsta}->find_prefix_states([reverse(@wlabs[0..($pos-1)])],[]);
-    %ruleids_l = map {$_=>undef} map {defined($_) ? unpack('L*', $_) : qw()} @{$lts->{lsta2full}}{@$qids_l};
-
-    delete(@ruleids{grep {!exists($ruleids_l{$_})} keys %ruleids});
-
-    $ruli=(sort {$a<=>$b} keys(%ruleids))[0];
-
-    if (!defined($ruli)) {
-      if ($lts->{apply_warn}) {
-	my $errword = join('', @$wchars[0..($pos-1)], '<<HERE>>', @$wchars[$pos..$#$wchars]);
-	warn(__PACKAGE__ , ": could not translate word \`$errword' -- skipping");
-	last;
-      }
-      return qw();
-    }
-
-    $rul = $lts->{rules}[$ruli];
-    if ($lts->{apply_verbose}) {
-      my $vword = join('', @$wchars[0..($pos-1)], '_', @$wchars[$pos..$#$wchars]);
-      print STDERR "Match: \'$vword\' matches rule $rul->{id}: ", rule2str($rul), "\n";
-    }
-
-    push(@phones,@{$rul->{out}});
-    $pos += @{$rul->{in}};
-    next CHAR;
-  }
-  return @phones;
-}
-
-##==============================================================================
-## Methods: index generation: brute force
-##==============================================================================
-
-
-##-- brute force search
-##   + requires: expand_alphabet()
-##   + INCOMPLETE
-sub bruteForceSearch {
-  my $lts = shift;
-
-  my @fifo = ( {left=>'',right=>'',out=>'',rules=>[0..$#{$lts->{rulex}}], } );
-  ##-- fifo: ( $h1, ..., )
-  ##  $h = {
-  ##        left  => $left_ctx,
-  ##        right => $in . $right_ctx,
-  ##        out   => $buf_output,
-  ##        rules => \@potential_match_indices,
-  ##       }
-  my $hists = $lts->{bruteHistories} = {};
-  my ($h,$hstr, $ruli,$rul, $h2,$h2r, $nextL,$nextR);
-  while (defined($h=shift(@fifo))) {
-    $hstr = "$h->{left}.$h->{right}:$h->{out}";
-    next if (exists($hists->{$hstr})); ##-- avoid loops
-    $hists->{$hstr} = undef;           ##-- mark history as visited
-
-    if (@{$h->{rules}}==0) {
-      ##-- no potential matches: too much history
-
-      ##-- what to do here?!
-      next;
-    }
-    if (@{$h->{rules}}==1) {
-      ##-- only 1 rule matches: flush output & continue
-      $ruli = $h->{rules}[0];
-      $rul  = $lts->{rulex}[$ruli];
-      $h2r  = $h->{right};
-      substr($h2r,0,@{$rul->{in}},'');
-      $h2  = { left=>$h->{left}.$rul->{in}, right=>$h2r, out=>'', };
-      $h2->{rules} = $lts->potentialMatches($h2);
-      push(@fifo,$h2);
-      next;
-    }
-    ##-- multiple rules may match: extend histories
-    push(@fifo,@{$lts->extendLeft($h)});
-    push(@fifo,@{$lts->extendRight($h)});
-  }
-
-  return $lts;
-}
-
-## TODO: \@potentially_matching_rulex_indices = $lts->potentialMatches($history)
-sub potentialMatches {
-  my ($lts,$h) = @_;
-
-  ##-- find all potentially matching rule indices
-  my (%indices_r,%indices_l) = qw();
-
-  ##-- left context
-  my ($qid_l,$lo_i_l) = $lts->{lsta}->find_prefix([reverse(@{$lts->{key2lab}}{split(//,$h->{left})})], []);
-  return [] if ($lo_i_l != length($h->{left}));
-
-  ##-- right context
-  my ($qid_r,$lo_i_r) = $lts->{rpta}->find_prefix([@{$lts->{key2lab}}{split(//,$h->{right})}], []);
-  return [] if ($lo_i_r != length($h->{right}));
-
-  ##-- index hashes
-  @indices_l{unpack('L*',$lts->{lsta2rules}[$qid_l])} = undef;
-  @indices_r{unpack('L*',$lts->{rpta2rules}[$qid_r])} = undef;
-
-  ##-- joint: left & right
-  delete(@indices_r{grep {!exists($indices_l{$_})} keys(%indices_r)});
-
-  #return [map { $lts->{rulex}[$_] } sort {$a<=>$b} keys(%indices_r)];
-  return [sort {$a<=>$b} keys(%indices_r)];
-}
-
-## TODO: $h2 = $lts->extendLeft($h)
-sub extendLeft {
-  my ($lts,$h) = @_;
-
-  my ($qid,$lo_i) = $lts->{lsta}->find_prefix([reverse(@{$lts->{key2lab}}{split(//,$h->{left})})], []);
-  return [] if ($lo_i != length($h->{left}));
-
-  ##-- single-letter extensions
-  my @extensions = qw();
-  my ($ai,%h2rules_l,$h2rules);
-  for ($ai=Gfsm::ArcIter->new($lts->{lsta},$qid); $ai->ok; $ai->next()) {
-    %h2rules_l = map { $_=>undef } unpack('L*',$lts->{lsta2rules}[$ai->target]);
-    $h2rules = [grep {exists($h2rules_l{$_})} @{$h->{rules}}];
-    push(@extensions, {
-		       left =>($lts->{lab2key}[$ai->lower] . $h->{left}),
-		       right=>$h->{right},
-		       out  =>$h->{out},
-		       rules=>$h2rules,
-		      });
-  }
-
-  return \@extensions;
-}
-
-## TODO: $h2 = $lts->extendRight($h,$letter)
-sub extendRight {
-  my ($lts,$h) = @_;
-
-  my ($qid,$lo_i) = $lts->{rpta}->find_prefix([@{$lts->{key2lab}}{split(//,$h->{left})}], []);
-  return [] if ($lo_i != length($h->{right}));
-
-  ##-- single-letter extensions
-  my @extensions = qw();
-  my ($ai,%h2rules_l,$h2rules);
-  for ($ai=Gfsm::ArcIter->new($lts->{rpta},$qid); $ai->ok; $ai->next()) {
-    %h2rules_l = map { $_=>undef } unpack('L*',$lts->{rpta2rules}[$ai->target]);
-    $h2rules = [grep {exists($h2rules_l{$_})} @{$h->{rules}}];
-    push(@extensions, {
-		       left =>$h->{left},
-		       right=>($h->{right} . $lts->{lab2key}[$ai->lower]),
-		       out  =>$h->{out},
-		       rules=>$h2rules,
-		      });
-  }
-
-  return \@extensions;
-}
 
 ##==============================================================================
 ## Methods: Rule Expansion

@@ -20,4 +20,7 @@ class * a b
 ;;b a [ b b ] a b = B
 ;;    [ b b ]     = B
 ;;b a [ b ]       = P
-    [ b ]       = B
+ a [ b ]       = P
+   [ b ]       = B
+
+ [ # ] = 

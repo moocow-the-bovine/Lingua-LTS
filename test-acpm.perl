@@ -121,74 +121,6 @@ sub out2str_ruleids {
 	  : '');
 }
 
-sub out2str_rulepos {
-  if (defined($_[0])) {
-    my @rulpos   = keys %{$_[0]};
-    my ($rp,$rulid,$lenL,$lenLI,$lenLIR, $matchBegin,$matchEnd,$matchid);
-    my %match2rp = qw();
-    foreach $rp (@rulpos) {
-      ($rulid,$nread,$lenL,$lenLI,$lenLIR) = unpack('LS4', $rp);
-      $matchBegin = $lenL-$nread;
-      $matchEnd   = $lenLI-$nread;
-      $matchBuf   = $lenLIR-$nread;
-      $matchid = pack('sss',$matchBegin,$matchEnd,$matchBuf);
-      if (!exists($match2rp{$matchid}) || $match2rp{$matchid}{rulid} > $rulid) {
-	$match2rp{$matchid} = {rulid=>$rulid,
-			       nread=>$nread,
-			       lenL=>$lenL,
-			       lenLI=>$lenLI,
-			       lenLIR=>$lenLIR,
-			       matchBegin=>$matchBegin,
-			       matchEnd=>$matchEnd,
-			       matchBuf=>$matchBuf,
-			      };
-      }
-    }
-    my ($m1id,$m2id,$m1,$m2);
-    ##-- eliminate overlap
-    foreach $m1id (keys(%match2rp)) {
-      next if (!defined($m1=$match2rp{$m1id}));
-      foreach $m2id (keys(%match2rp)) {
-	$m2 = $match2rp{$m2id};
-	next if ($m1 eq $m2 || $m1->{matchBuf} > 0 || $m2->{matchBuf} > 0);
-	if ($m1->{rulid} < $m2->{rulid}
-	    && $m1->{matchBegin} < $m2->{matchBegin}
-	    && $m1->{matchEnd} > $m2->{matchBegin})
-	  {
-	    delete($match2rp{$m2id});
-	  }
-      }
-    }
-
-    my ($match,$rul,@rsyms);
-    return ('\\n= '
-	    .join('\\n| ',
-		  map {
-		    $match = $match2rp{$_};
-		    $rul   = $rules[$match->{rulid}];
-		    @rsyms = (@{$rul->{lhs}},@{$rul->{in}},@{$rul->{rhs}});
-		    @rsyms[$match->{nread}-1] .= "_";
-		    splice(@rsyms, $match->{lenLI}, 0, ':', @{$rul->{out}}, ']');
-		    splice(@rsyms, $match->{lenL},  0, '[');
-		    (''
-		     ." ~ "
-		     #.$match->{nread}."/"
-		     ."{$match->{matchBegin}..$match->{matchEnd}($match->{matchBuf})} -> "
-		     ."$rul->{id} : "
-		     .join('', @rsyms)
-		     #.join(',', @$match{qw(lenL lenLI lenLIR)})
-		     )
-		  } sort {
-		    @al=unpack('s3',$a);
-		    @bl=unpack('s3',$b);
-		    ($al[0] <=> $bl[0]
-		     || $al[1] <=> $bl[1]
-		     || $al[2] <=> $bl[2])
-		  } keys(%match2rp)));
-  }
-  return '';
-}
-
 
 ##--------------------------------------------------------------
 ## Generation: ACPM: native
@@ -219,6 +151,8 @@ sub genacpm {
 ##--------------------------------------------------------------
 ## generate a gfsm transducer
 sub lts2fst {
+  #$lts->{implicit_bos}=$lts->{implicit_eos}=0;
+
   our $acpm = $lts->toACPM();
   our $qlabs_d = $acpm->gfsmStateLabels(undef,out2str=>\&out2str_ruleids);
   our $qlabs_p = $acpm->gfsmStateLabels(undef,out2str=>undef);
@@ -230,14 +164,139 @@ sub lts2fst {
   $acpm1->{out}{$_} = $lts->{q2rulpos}[$_] foreach (0..$#{$lts->{q2rulpos}});
   our $qlabs_rp    = $acpm1->gfsmStateLabels(undef,out2str=>\&out2str_rulepos);
 
-  #viewfsm($fst,labels=>$iolabs,states=>$qlabs_rp,title=>'LTS->FST');
-  $acpm1->viewps(bg=>1,states=>$qlabs_rp,title=>"ACPM_1");
+  viewfsm($fst,labels=>$iolabs,states=>$qlabs_p,title=>'LTS->FST');
+  #$acpm1->viewps(bg=>1,states=>$qlabs_rp,title=>"ACPM_1");
 
-  our $acpm1c = $acpm1->clone->complete;
-  $acpm1c->viewps(bg=>1,states=>$qlabs_rp,title=>"ACPM_1 (complete)");
+  #our $acpm1c = $acpm1->clone->complete;
+  #$acpm1c->viewps(bg=>1,states=>$qlabs_rp,title=>"ACPM_1 (complete)");
 }
 testltstestx;
 lts2fst;
+
+##--------------------------------------------------------------
+## Utility: out2str_rulepos
+sub out2str_rulepos {
+  if (defined($_[0])) {
+    my @rulpos   = keys %{$_[0]};
+    ##
+    ##-- get symbolic index %rp2match
+    my ($rp,$lenL,$lenLI,$lenLIR,$nread,$rulid, $matchid);
+    my %rp2match = qw();
+    foreach $rp (@rulpos) {
+      ($lenL,$lenLI,$lenLIR,$nread,$rulid) = unpack('S4L', $rp);
+      $matchid = pack('S4',$lenL,$lenLI,$lenLIR,$nread);
+      $rp2match{$rp} = {rulid=>$rulid,
+			nread=>$nread,
+			lenL=>$lenL,
+			lenLI=>$lenLI,
+			lenLIR=>$lenLIR,
+			matchBegin=>($lenL-$nread),
+			matchEnd=>($lenLI-$nread),
+			matchBuf=>($lenLIR-$nread),
+			#matchid=>$matchid,
+		       };
+    }
+    ##
+    ##-- generate output string
+    my ($match,$rul,@rsyms);
+    return ('\\n= '
+	    .join('\\n| ',
+		  map {
+		    $match = $rp2match{$_};
+		    $rul   = $rules[$match->{rulid}];
+		    @rsyms = (@{$rul->{lhs}},@{$rul->{in}},@{$rul->{rhs}});
+		    $rsyms[$_] = '?' foreach (scalar(@rsyms)..($match->{nread}-1));
+		    @rsyms[$match->{nread}-1] .= "_";
+		    splice(@rsyms, scalar(@{$rul->{lhs}}+@{$rul->{in}}), 0, ':', @{$rul->{out}}, ']');
+		    splice(@rsyms, scalar(@{$rul->{lhs}}),               0, '[');
+		    (''
+		     .' ~ '
+		     ."{$match->{lenL}..$match->{lenLI}($match->{lenLIR})}"
+		     ." \@ $match->{nread}"
+		     ." ~ {$match->{matchBegin}..$match->{matchEnd}($match->{matchBuf})}"
+		     ." -> $rul->{id}"
+		     .' : '.join('', @rsyms)
+		     )
+		  } sort {
+		    #($b->{lenLIR}   <=> $a->{lenLIR}
+		    # || $b->{lenLI} <=> $a->{lenLI}
+		    # || $b->{lenL}  <=> $a->{lenL}
+		    # || $a->{rulid} <=> $b->{rulid})
+		    $b cmp $a
+		  }
+		  keys(%rp2match)
+		  #values(%rp2match)
+		 ));
+  }
+  return '';
+}
+
+sub out2str_rulepos_0 {
+  if (defined($_[0])) {
+    my @rulpos   = keys %{$_[0]};
+    my ($rp,$lenL,$lenLI,$lenLIR,$nread,$rulid, $matchBegin,$matchEnd,$matchid);
+    my %match2rp = qw();
+    foreach $rp (@rulpos) {
+      ($lenL,$lenLI,$lenLIR,$nread,$rulid) = unpack('S4L', $rp);
+      $matchBegin = $lenL-$nread;
+      $matchEnd   = $lenLI-$nread;
+      $matchBuf   = $lenLIR-$nread;
+      $matchid = pack('sss',$matchBegin,$matchEnd,$matchBuf);
+      if (!exists($match2rp{$matchid}) || $match2rp{$matchid}{rulid} > $rulid) {
+	$match2rp{$matchid} = {rulid=>$rulid,
+			       nread=>(@{$rules[$rulid]{lhs}}-$matchBegin),
+			       lenL=>$lenL,
+			       lenLI=>$lenLI,
+			       lenLIR=>$lenLIR,
+			       matchBegin=>$matchBegin,
+			       matchEnd=>$matchEnd,
+			       matchBuf=>$matchBuf,
+			      };
+      }
+    }
+    my ($m1id,$m2id,$m1,$m2);
+    ##-- eliminate overlap
+    foreach $m1id (keys(%match2rp)) {
+      next if (!defined($m1=$match2rp{$m1id}));
+      foreach $m2id (keys(%match2rp)) {
+	$m2 = $match2rp{$m2id};
+	next if ($m1 eq $m2 || $m1->{matchBuf} > 0 || $m2->{matchBuf} > 0);
+	if ($m1->{rulid} < $m2->{rulid}
+	    && $m1->{matchBegin} <= $m2->{matchBegin}
+	    && $m1->{matchEnd}   >= $m2->{matchBegin})
+	  {
+	    delete($match2rp{$m2id});
+	  }
+      }
+    }
+    ##-- output string
+    my ($match,$rul,$i0,@rsyms);
+    return ('\\n= '
+	    .join('\\n| ',
+		  map {
+		    $match = $match2rp{$_};
+		    $rul   = $rules[$match->{rulid}];
+		    @rsyms = (@{$rul->{lhs}},@{$rul->{in}},@{$rul->{rhs}});
+		    $rsyms[$_] = '?' foreach (scalar(@rsyms)..($match->{nread}-1));
+		    @rsyms[$match->{nread}-1] .= "_";
+		    splice(@rsyms, scalar(@{$rul->{lhs}}+@{$rul->{in}}), 0, ':', @{$rul->{out}}, ']');
+		    splice(@rsyms, scalar(@{$rul->{lhs}}),               0, '[');
+		    (''
+		     ." ~ "
+		     ."{$match->{matchBegin}..$match->{matchEnd}($match->{matchBuf})} -> "
+		     ."$rul->{id} : "
+		     .join('', @rsyms)
+		     )
+		  } sort {
+		    @al=unpack('s3',$a);
+		    @bl=unpack('s3',$b);
+		    ($al[0] <=> $bl[0]
+		     || $al[1] <=> $bl[1]
+		     || $al[2] <=> $bl[2])
+		  } keys(%match2rp)));
+  }
+  return '';
+}
 
 
 ##--------------------------------------------------------------

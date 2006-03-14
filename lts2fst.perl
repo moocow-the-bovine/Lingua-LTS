@@ -7,6 +7,7 @@ use File::Basename qw(basename);
 
 use lib qw(.);
 use Lingua::LTS;
+use Gfsm;
 
 ##==============================================================================
 ## Constants & Globals
@@ -32,10 +33,14 @@ GetOptions(##-- General
 	   'verbose|v' => \$verbose,
 
 	   ##-- Output
-	   'output|o|lexfile|l=s' => \$outfile,
-	   'symbols|symfile|s:s' => \$symfile,
+	   'output|o|F=s'        => \$outfile,
+	   'symbols|symfile|s=s' => \$symfile,
 	   'qlabels|statelabels|ql|q=s' => \$qlabfile,
-	   'nosymbols|nosyms|ns|S' => sub { $symfile=''; },
+	   'nosymbols|nosyms|ns|S' => sub { $symfile=''; }, ##-- defined but empty: no symbols
+
+	   ##-- behavior
+	   'bos|b!' => \$lts->{implicit_bos},
+	   'eos|e!' => \$lts->{implicit_eos},
 	  );
 
 pod2usage({-exitval=>0, -verbose=>0}) if ($help);
@@ -49,10 +54,10 @@ pod2usage({-exitval=>0, -verbose=>0}) if ($help);
 ## helper: verbose operation
 
 sub mainop {
-  my ($msg,$sub) = @_;
-  print STDERR "$0: $msg..." if ($verbose);
+  my ($msg,$sub,$done) = @_;
+  print STDERR "$0: $msg" if ($verbose);
   &$sub();
-  print STDERR " done.\n" if ($verbose);
+  print STDERR (defined($done) ? $done : " done.\n") if ($verbose);
 }
 
 ##==============================================================================
@@ -61,17 +66,40 @@ sub mainop {
 
 push(@ARGV,'-') if (!@ARGV);
 $lts_file = shift;
-mainop("loading LTS file '$lts_file'", sub { $lts->load($lts_file) });
+mainop("loading LTS file '$lts_file'...", sub { $lts->load($lts_file) });
 
 ##-- add 'letters', 'phones', 'specials' keys
-mainop("expanding alphabet", sub { $lts->expand_alphabet() });
+mainop("expanding alphabet",
+       sub { $lts->expand_alphabet() },
+      );
+print STDERR
+  ("$0: -> ",
+   scalar(keys %{$lts->{letters}}), " letters, ",
+   scalar(keys %{$lts->{phones}}), " phones.\n");
 
 ##-- expand rules
-mainop("expanding rules", sub { $lts->expand_rules() });
+mainop("expanding rules...",
+       sub { $lts->expand_rules() },
+      );
+print STDERR
+  ("$0: -> ",
+   scalar(@{$lts->{rules}}), " aliased, ",
+   scalar(@{$lts->{rulex}}), " expanded.\n");
+
+##-- generate ACPM index
+mainop("generating ACPM index...",
+       sub { $acpm = $lts->toACPM(complete=>0); },
+      );
+print STDERR "$0: -> $acpm->{nq} states.\n";
+
+##-- generate labels
+mainop("generating I/O labels...", sub { $iolabs = $lts->gfsmLabels(); });
 
 ##-- generate automaton
-#mainop("generating automaton", sub { $fst = $lts->toAutomaton() });
-$fst = $lts->toAutomaton();
+mainop("generating FST...\n",
+       sub { $fst = $lts->gfsmTransducer(ilabels=>$iolabs,olabels=>$iolabs,verbose=>1); },
+       "$0: FST generated.\n",
+      );
 
 ##-- symbols
 if ($outfile ne '-' && !defined($symfile)) {
@@ -80,17 +108,26 @@ if ($outfile ne '-' && !defined($symfile)) {
   $symfile = $outbase . ".sym";
 }
 ##-- save symbols file (maybe)
-mainop("saving symbols file '$symfile'", sub { $fst->save_symbols($symfile) })
+mainop("saving symbols file '$symfile'...", sub { $lts->save_symbols($symfile) })
   if ($symfile);
 
 ##-- state labels
-mainop("saving state labels file '$qlabfile'", sub { $fst->save_state_labels($qlabfile) })
-  if ($qlabfile);
+if ($qlabfile) {
+  mainop("saving state labels file '$qlabfile'...",
+	 sub {
+	   $qlabs = $acpm->gfsmStateLabels(undef,out2str=>undef);
+	   foreach $q ($qlabs->size()..($fst->n_states-1)) {
+	     $qlabs->insert("q$q", $q);
+	   }
+	   $qlabs->save($qlabfile);
+	 });
+}
+
 
 ##-- save tfst
-mainop("saving AT&T automaton text file '$outfile'",
+mainop("saving AT&T automaton text file '$outfile'...",
        sub {
-	 $fst->save_att_text($outfile,use_state_labels=>defined($qlabfile))
+	 $fst->print_att($outfile, lower=>$iolabs, upper=>$iolabs, states=>$qlabs);
        });
 
 
@@ -115,7 +152,7 @@ lts2fst.perl - convert an LTS ruleset to an AT&T text transducer
  Output:
   -output  TFSTFILE
   -qlabels QLABFILE                ##-- state labels
-  -symbols SYMFILE  , -nosymbols   ##-- default is `basename RULFILE`.sym
+  -symbols SYMFILE  , -nosymbols   ##-- default is `basename TFSTFILE`.sym
 
 =cut
 
