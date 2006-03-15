@@ -221,6 +221,11 @@ sub toACPM {
     }
   }
 
+  ##-- step 1b: add EOS pseudo-rule (hack)
+  if ($lts->{implicit_eos} && !defined($trie->{goto}[0]{'#'})) {
+    $trie->add('#',undef);
+  }
+
   ##-- step 2: generate ACPM
   my $acpm = $lts->{acpm} = Lingua::LTS::ACPM->newFromTrie($trie,joinout=>\&_acpm_joinout);
   $acpm->complete() if ($args{complete});
@@ -236,6 +241,7 @@ sub _acpm_joinout {
   }
   return {%{$_[1]}} if (defined($_[1]));
 }
+
 
 ## $labs = $lts->gfsmLabels
 ##   + requires: $lts->expand_alphabet()
@@ -304,24 +310,38 @@ sub gfsmTransducer {
   ##    + eliminate redundant rules (overlap)
   ##    + inherit *completed* rules from $q to $qto on ($q --$c--> $qto)
   my @fifo = (0);
-  my ($rp,$c,$qto, @rps);
+  my ($rp,$c,$qto, @rps,$badi,%rpibad);
   my ($rpi1,$lenL1,$lenLI1,$lenLIR1,$nread1,$rulid1,$begin1,$end1);
   my ($rpi2,$lenL2,$lenLI2,$lenLIR2,$nread2,$rulid2,$begin2,$end2);
   while (defined($q=shift(@fifo))) {
     ##-- eliminate redundant rules (overlap) in $q2rulpos
-    @rps = defined($q2rulpos->[$q]) ? keys(%{$q2rulpos->[$q]}) : qw();
+    @rps    = defined($q2rulpos->[$q]) ? keys(%{$q2rulpos->[$q]}) : qw();
+    %rpibad = qw();
     foreach $rpi1 (1..$#rps) {
+      next if (exists($rpibad{$rpi1}));
       ($lenL1,$lenLI1,$lenLIR1,$nread1,$rulid1) = unpack('S4L', $rps[$rpi1]);
       next if ($nread1 < $lenLIR1);   ##-- unfinished: keep it
       ($begin1,$end1) = ($lenL1-$nread1, $lenLI1-$nread1);
       foreach $rpi2 (0..($rpi1-1)) {
+	next if (exists($rpibad{$rpi2}));
 	($lenL2,$lenLI2,$lenLIR2,$nread2,$rulid2) = unpack('S4L', $rps[$rpi2]);
 	next if ($nread2 < $lenLIR2); ##-- unfinished: keep it
 	($begin2,$end2) = ($lenL2-$nread2, $lenLI2-$nread2);
-	if    ($rulid1 < $rulid2 && $begin1 <= $begin2 && $end1 > $begin2) {
+
+	if ($begin1==$begin2 && $rulid1 != $rulid2) {
+	  ##-- identical input begin position: prefer best rulid
+	  $badi = $rulid1 < $rulid2 ? $rpi2 : $rpi1;
+	  $rpibad{$badi} = undef;
+	  delete($q2rulpos->[$q]{$rps[$badi]});
+	}
+	elsif ($begin1 < $begin2 && $end1 > $begin2) {
+	  ##-- overlap: rule1 << rule2
+	  $rpibad{$rpi2} = undef;
 	  delete($q2rulpos->[$q]{$rps[$rpi2]});
 	}
-	elsif ($rulid2 < $rulid1 && $begin2 <= $begin1 && $end2 > $begin1) {
+	elsif  ($begin2 < $begin1 && $end2 > $begin1) {
+	  ##-- overlap: rule2 << rule1
+	  $rpibad{$rpi1} = undef;
 	  delete($q2rulpos->[$q]{$rps[$rpi1]});
 	}
       }
@@ -341,7 +361,9 @@ sub gfsmTransducer {
   }
 
   print STDERR ("done.\n",
-		ref($lts), "::gfsmTransducer(): completing delta()...\n")
+		ref($lts), "::gfsmTransducer(): completing delta()...",
+		#"\n",
+	       )
     if ($args{verbose});
 
   ##-- Phase 3
@@ -355,6 +377,7 @@ sub gfsmTransducer {
     if (!exists($acpm->{chars}{'#'}) && ($lts->{implicit_bos} || $lts->{implicit_eos}));
   my $fail = $acpm->{fail};
   my ($gotoq,$deltaq, @qrps, $rp1,$rp2, $q2,$goto_qc,@rps_qc,@out_qc);
+  my (@qin,$cin);
   my $nQ=0;
   foreach $q (0..($acpm->{nq}-1)) {
     print STDERR '.' if ($args{verbose} && $nQ++ % 1000 == 0);
@@ -364,40 +387,67 @@ sub gfsmTransducer {
     $deltaq = $delta->[$q] = { map { $_=>$gotoq->{$_} } keys(%$gotoq) };
 
     ##-- get safe output for $q
-    @qrps = map {
-      ($lenL1,$lenLI1,$lenLIR1,$nread1,$rulid1) = unpack('S4L', $_);
-      ($nread1 >= $lenLIR1
-       ? {
-	  lenL=>$lenL1,
-	  lenLI=>$lenLI1,
-	  lenLIR=>$lenLIR1,
-	  nread=>$nread1+1,
-	  rulid=>$rulid1,
-	  begin=>($lenL1-$nread1-1),
-	  end=>($lenLI1-$nread1-1),
-	 }
-       : qw())
-    } keys(%{$q2rulpos->[$q]});
+    @qrps =
+      (
+       sort { $a->{begin} <=> $b->{begin} }
+       map {
+	 ($lenL1,$lenLI1,$lenLIR1,$nread1,$rulid1) = unpack('S4L', $_);
+	 ($nread1 >= $lenLIR1
+	  ? {
+	     lenL=>$lenL1,
+	     lenLI=>$lenLI1,
+	     lenLIR=>$lenLIR1,
+	     nread=>$nread1+1,
+	     rulid=>$rulid1,
+	     begin=>($lenL1-$nread1-1),
+	     end=>($lenLI1-$nread1-1),
+	    }
+	  : qw())
+       } keys(%{$q2rulpos->[$q]})
+      );
 
-    $outF->[$q] = [
-		   map { @{$lts->{rules}[$_->{rulid}]{out}} }
-		   sort { $a->{begin} <=> $b->{begin} } @qrps
-		  ];
+    $outF->[$q] = [map { @{$lts->{rules}[$_->{rulid}]{out}} } @qrps];
+
+    ##-- get input (target) for q
+    @qin = map { @{$lts->{rules}[$_->{rulid}]{in}} } @qrps;
 
     ##-- failure arcs: $q --eps:$out_qc--> $q2 --$c:eps--> $goto->[$q2]{$c}=$goto_qc
     foreach $c (grep { !exists($deltaq->{$_}) } @chars) {
       $q2 = $fail->[$q];
+      ##-- follow fail-paths for all completed inputs of $q
+      foreach $cin (@qin[1..$#qin]) {
+	$q2 = $fail->[$q2] while (!defined($goto_qc=$goto->[$q2]{$cin}));
+	$q2 = $goto_qc;
+      }
+      ##-- follow failure path for completed input path
       $q2 = $fail->[$q2] while (!defined($goto_qc=$goto->[$q2]{$c}));
 
       ##-- get allowable configurations @rps_qc for $q --$c:???--> $q2
       @rps_qc = qw();
     RP1:
       foreach $rp1 (@qrps) {
+	($begin1,$end1,$rulid1) = @$rp1{qw(begin end rulid)};
 	foreach $rp2 (keys(%{$q2rulpos->[$goto_qc]})) {
 	  ($lenL2,$lenLI2,$lenLIR2,$nread2,$rulid2) = unpack('S4L', $rp2);
-	  next if ($nread2 < $lenLIR2); ##-- ignore incompletely read rules in fail sink state
+	  next if ($nread2 < $lenLIR2); ##-- ignore incompletely read rules in fail sink state (?)
 	  ($begin2,$end2) = ($lenL2-$nread2, $lenLI2-$nread2);
-	  next RP1 if ($rulid2 < $rp1->{rulid} && $begin2 <= $rp1->{begin} && $end2 > $rp1->{begin});
+
+	  if ($begin1==$begin2 && $end1==$end2) {
+	    ##-- identical match: prefer best rulid
+	    next RP1 if ($rulid2 < $rulid1);
+	  }
+	  elsif ($begin1 < $begin2 && $end1 > $begin2) {
+	    ##-- overlap: rule1 << rule2
+	    warn("\n",
+		 ref($lts), "::gfsmTransducer(): Error: nonsensical overlap for q=$q, c=$c, qto=$goto_qc: ",
+		 "\n  > r1={$begin1..$end1} ~ $rulid1 : ", rule2str($lts->{rules}[$rulid1]),
+		 "\n  > r2={$begin2..$end2} ~ $rulid2 : ", rule2str($lts->{rules}[$rulid2]),
+		 "\n  > ")
+	  }
+	  elsif ($begin2 < $begin1 && $end2 > $begin1) {
+	    ##-- overlap: rule2 << rule1
+	    next RP1;
+	  }
 	}
 	push(@rps_qc, $rp1);
       }
@@ -423,19 +473,17 @@ sub gfsmTransducer {
   $fst->root($fst->ensure_state(0));
 
   ##-- add designated EOS state
-  my $qeos = $acpm->{nq};
-  my $qmax = $qeos;
-  if (!$lts->{implicit_eos}) {
-    $fst->add_state($qeos);
-    $fst->is_final($qeos,1);
-    ++$qmax;
-  }
+  my ($qeos,$qmax,$eoslab);
+  $qeos = $acpm->{nq};
+  $qmax = $qeos+1;
+  $fst->add_state($qeos);
+  $fst->is_final($qeos,1);
 
   ##-- add all states, arcs
   my ($delta_qc, $i, $clab);
   foreach $q (0..($acpm->{nq}-1)) {
     ##-- add eos arcs: $q --eps:$outF[$q]--> $qeos
-    if (!$lts->{implicit_eos}) {
+    #if (!$lts->{implicit_eos}) {
       @out_qc = @{$outF->[$q]};
       $fst->add_arc($q, ($#out_qc <= 0 ? $qeos                         : ($qmax++)),
 		    0,  ($#out_qc >= 0 ? $olabs->get_label($out_qc[0]) : 0),
@@ -445,7 +493,7 @@ sub gfsmTransducer {
 		      0,       $olabs->get_label($out_qc[$i]),
 		      0);
       }
-    }
+    #}
 
     ##-- add arcs $q --$c:$out_qa--> $q2
     $deltaq = $delta->[$q];
@@ -453,11 +501,7 @@ sub gfsmTransducer {
       ($qto,@out_qc) = split(/ /, $delta_qc);
       $clab = $ilabs->get_label($c);
 
-      ##-- handle final states with implicit eos
-      $fst->is_final($qto, 1)
-	if ($c eq '#' && $lts->{implicit_eos});
-
-      ##-- handle other arcs
+      ##-- handle usual arcs
       $fst->add_arc($q,    ($#out_qc <= 0 ? $qto                          : ($qmax++)),
 		    $clab, ($#out_qc >= 0 ? $olabs->get_label($out_qc[0]) : 0),
 		    0);

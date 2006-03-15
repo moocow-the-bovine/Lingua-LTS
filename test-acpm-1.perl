@@ -235,21 +235,6 @@ sub lts2fst_2b {
   our $qmax = $lfst->n_states();
   our $ai = Gfsm::ArcIter->new;
   foreach $q (0..($lacpm->{nq}-1)) {
-#    $r = $qmax++;
-#    $lqlabs->insert("q${r}~r(q$q)", $r);
-#    for ($ai->open($lfst,$q); $ai->ok; $ai->reset) {
-#      $lfst->add_arc($r,$ai->target,
-#		     $ai->lower, $lolabs->find_label($lilabs->find_key($ai->lower)),
-#		     0);
-#      $ai->remove;
-#    }
-#    $lfst->add_arc($q,$r, 0,$lolabs->find_label($lacpm->{out}{$q}), 0);
-#    ##-- re-route state-finality
-#    #if ($lfst->is_final($q)) {
-#    #  $lfst->is_final($q,0);
-#    #  $lfst->is_final($r,1);
-#    #}
-##--
     %rdeltaq = qw();
     for ($ai->open($lfst,$q); $ai->ok; $ai->next) {
       if (!exists($rdeltaq{$qto=$ai->target})) {
@@ -274,7 +259,7 @@ sub lts2fst_2b {
   $racpm->complete;
 
   ##-- get i/o alphabet for lacpm
-  our $rilabs   = $lolabs;
+  our $rilabs   = $racpm->gfsmInputLabels(Storable::dclone($lolabs),   epsilon=>'<eps>');
   our $rilabs_d = Storable::dclone($rilabs);
   foreach (1..($nlolabs-1)) {
     $key = $rilabs->find_key($_);
@@ -289,11 +274,6 @@ sub lts2fst_2b {
   our $rolabs_d = $racpm->gfsmOutputLabels(undef, epsilon=>'<eps>', out2str=>\&out2str_packed);
   $rolabs_d->insert($_) foreach (@{$lolabs_d->asArray}[1..($nlolabs-1)]);
 
-  our $colabs_d = Gfsm::Alphabet->new();
-  $colabs_d->insert('<eps>',0);
-  $colabs_d->insert('<none>',1);
-  $colabs_d->insert(rule2str($lts->{rules}[$_]), $_+2) foreach (0..$#{$lts->{rules}});
-
   our $rqlabs   = $racpm->gfsmStateLabels(undef, out2str=>undef);
 
   ##-- RHS: build & adjust racpm fst
@@ -303,44 +283,24 @@ sub lts2fst_2b {
   foreach $q (0..($racpm->{nq}-1)) {
     ##-- state for having read ruleset id out(LACPM), pending letter in(LACPM)
     $r = $qmax++;
-    $rqlabs->insert("q${r}~r(q$q)", $r);
+    $rqlabs->insert("q${r}~q$q", $r);
 
-    ##-- re-route old letter arcs from (q--a:OutR-->qto) to (r--a:eps-->qto)
+    ##-- re-route old letter arcs from (q--a:b-->qto) to (r--a:b-->qto)
     for ($ai->open($rfst,$q); $ai->ok; $ai->reset) {
-      $rfst->add_arc($r,$ai->target, $ai->lower,0, 0);
+      $rfst->add_arc($r,$ai->target, $ai->lower,$ai->upper, 0);
       $ai->remove;
     }
 
-    ##-- re-route state-finality
-    #if ($rfst->is_final($q)) {
-    #  $rfst->is_final($q,0);
-    #  $rfst->is_final($r,1);
-    #}
-
-    ##-- add rule-arcs (q--OutL:OutBest-->r) for each possible rule $OutL in out(LACPM)
-    $rout = $racpm->{out}{$q};
-    foreach $loseti (1..($nlolabs-1)) {
-      $lout = $lolabs->find_key($loseti);
-
-      ##-- search for best match
-      $hilab = undef;
-      for ($routi=0,$louti=0; $routi < length($rout) && $louti < length($lout); $routi++) {
-	$routid = unpack('S',substr($rout,$routi*2,2));
-	$louti++ while (($loutid=unpack('S',substr($lout,$louti*2,2)))<$routid);
-	if ($loutid==$routid) {
-	  $hilab = $loutid+1;
-	  last;
-	}
-      }
-
-      $lolab = $rilabs->find_label($lout);
-      $rfst->add_arc($q,$r, $lolab,(defined($hilab) ? $hilab : 1), 0);
+    ##-- add rule-arcs (q--R:R-->r) for each possible rule in out(LACPM)
+    foreach $i (1..($nlolabs-1)) {
+      $key = $lolabs->find_key($i);
+      $lolab = $rilabs->find_label($key);
+      $hilab = $rolabs->find_label($key);
+      $rfst->add_arc($q,$r, $lolab,$hilab, 0);
     }
   }
 
   ##-- LHS ° RHS
-  $lfst->arcsort(Gfsm::ASMUpper);
-  $rfst->arcsort(Gfsm::ASMLower);
   print STDERR "compose(lfst,rfst->reverse)...\n";
   our $cfst = $lfst->compose($rfst->reverse);
 
@@ -351,15 +311,15 @@ sub lts2fst_2b {
   ##-- RHS: view
   #$racpm0->viewps(bg=>1,title=>'RACPM',out2str=>\&out2str_packed);
   #$racpm->viewps(bg=>1,title=>'RACPM',out2str=>\&out2str_packed);
-  viewfsm($rfst,lower=>$rilabs_d,upper=>$colabs_d,states=>$rqlabs,bg=>1);
+  #viewfsm($rfst,lower=>$rilabs,upper=>$rolabs_d,states=>$rqlabs,bg=>1);
 
   ##-- composition: view
-  #viewfsm($cfst,lower=>$lilabs,upper=>$colabs_d,bg=>1);
+  viewfsm($cfst,lower=>$lilabs,upper=>$rolabs_d,bg=>1);
 
   #$w='abba';
   #$resl = $lfst->lookup([@{$lilabs->asHash}{split(//,$w)}])->connect;
   #$resr = $rfst->lookup([reverse(@{$rilabs->asHash}{@{$lolabs->asArray}[@{$resl->paths->[0]{hi}}]})])->connect->reverse->rmepsilon;
-  #$resc = $cfst->lookup([@{$lilabs->asHash}{split(//,$w)}])->connect;
+  $resc = $cfst->lookup([@{$lilabs->asHash}{split(//,$w)}])->connect;
 }
 testltstest2x;
 #testims2x();

@@ -1,0 +1,43 @@
+;; -*- Mode: Scheme -*-
+;; File: test.lts
+
+;;;---------------------------------------------------------------------
+;;; Phoneset
+class eos #
+
+;;phon A E B P
+
+
+;;;---------------------------------------------------------------------
+;;; Classes
+;;class * a b
+
+;;;---------------------------------------------------------------------
+;;; Rules
+
+ [ a ] = A
+
+;; [ b b ] = B
+;; [ a b ] = P
+ [ b ]   = B
+
+;; [ c h ] = C         ;; R027b: ch
+;; [ c ]   = k         ;; R030: c sonst
+
+;; [ d ] # = t        ;; R037: d/dd am Wortende 
+;; [ d ] = d
+
+;; [ e ] d = e:     ;; R051: e vor einem Konsonant  (HACK)
+;; [ e ] = @        ;; R058: e vor Vokal ausser Diphtong
+
+;; [ h ] = h
+
+;; [ i e ] = i:        ;; R078: ie    
+;; [ i ]   = i:        ;; R083: i vor Vokal ausser Diphtong      
+
+;;d [ s c h ] = Z
+;;  [ s c h ] = S       ;; R118-120: sch 
+;;  [ s ] c   = s       ;; [ s ] Cz = s        ;; R125: im Wortinneren 
+;;  [ s ]     = z       ;; R130: sonstige s
+
+;; [ # ] = 

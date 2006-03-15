@@ -100,15 +100,15 @@ sub compile {
   ##-- Phase 1: breadth-first fail(q) completion: search
   my ($r,$u,$v,$goto_va);
   while (defined($r=shift(@fifo))) {
+    if ($r != 0 && exists($out->{$fail->[$r]}) && defined($joinout)) {
+      $out->{$r} = $joinout->(@$out{$r,$fail->[$r]});
+    }
     foreach $a (grep {defined($goto->[$r]{$_})} @chars) {
       $u=$goto->[$r]{$a};
       push(@fifo,$u);
       $v = $fail->[$r];
       $v = $fail->[$v] while (!defined($goto_va=$goto->[$v]{$a}));
       $fail->[$u] = $goto->[$v]{$a};
-      if (exists($out->{$fail->[$u]}) && defined($joinout)) {
-	$out->{$u} = $joinout->(@$out{$u,$fail->[$u]});
-      }
     }
   }
 
@@ -243,17 +243,19 @@ sub gfsmAutomaton {
   $fsm->is_transducer(0);
   $fsm->is_weighted(0);
   $fsm->root(0);
-  my ($q,$qah,$a,$qto);
+  my ($q,$qah,$a,$alab,$qto);
+  my $faillab = $ilabs->get_label($acpm->{failstr});
   foreach $q (0..($acpm->{nq}-1)) {
     ##-- goto
     if (defined($qah = $acpm->{goto}[$q])) {
       while (($a,$qto)=each(%$qah)) {
-	$fsm->add_arc($q,$qto, $ilabs->get_label($a),Gfsm::epsilon(), 0);
+	$alab = $ilabs->get_label($a);
+	$fsm->add_arc($q,$qto, $alab,$alab, 0);
       }
     }
     ##-- fail
     if (defined($qto = $acpm->{fail}[$q])) {
-      $fsm->add_arc($q,$qto, $ilabs->get_label($acpm->{failstr}),Gfsm::epsilon(), 0);
+      $fsm->add_arc($q,$qto, $faillab,$faillab, 0);
     }
     ##-- output
     if (exists($acpm->{out}{$q})) {

@@ -148,11 +148,16 @@ sub s2prefix {
 
 ## $ilabs = $trie->gfsmInputLabels()
 ## $ilabs = $trie->gfsmInputLabels($labs)
+## $ilabs = $trie->gfsmInputLabels($labs,%args)
 ##  + input alphabet
+##  + %args:
+##     epsilon => $eps_str, ##-- default: $trie->{epsilon}
 sub gfsmInputLabels {
-  my ($trie,$labs) = @_;
+  my ($trie,$labs,%args) = @_;
   $labs = Gfsm::Alphabet->new if (!defined($labs));
-  $labs->insert($trie->{epsilon},Gfsm::epsilon()) if (!defined($labs->find_key(Gfsm::epsilon())));
+  $labs->insert((defined($args{epsilon}) ? $args{epsilon} : $trie->{epsilon}),
+		Gfsm::epsilon())
+    if (!defined($labs->find_key(Gfsm::epsilon())));
   $labs->insert($_) foreach (sort keys (%{$trie->{chars}}));
   return $labs;
 }
@@ -161,12 +166,15 @@ sub gfsmInputLabels {
 ## $olabs = $trie->gfsmOutputLabels($labs,%args)
 ##  + output alphabet
 ##  + %args:
-##     out2str   => \&sub, ##-- get key for $out: default: stringify
+##     out2str => \&sub,    ##-- get key for $out: default: stringify
+##     epsilon => $eps_str, ##-- default: $trie->{epsilon}
 sub gfsmOutputLabels {
   my ($trie,$labs,%args) = @_;
   my $out2str = exists($args{out2str}) ? $args{out2str} : undef;
   $labs = Gfsm::Alphabet->new if (!defined($labs));
-  $labs->insert($trie->{epsilon},Gfsm::epsilon()) if (!defined($labs->find_key(Gfsm::epsilon())));
+  $labs->insert((defined($args{epsilon}) ? $args{epsilon} : $trie->{epsilon}),
+		Gfsm::epsilon())
+    if (!defined($labs->find_key(Gfsm::epsilon())));
   my ($out);
   foreach $out (values(%{$trie->{out}})) {
     $labs->insert((defined($out2str) ? $out2str->($out)
@@ -204,16 +212,17 @@ sub out2str_default { return defined($_[0]) ? "=$_[0]" : ''; }
 ##     dosort=>$bool,        ##-- sort automaton? (default=yes)
 sub gfsmAutomaton {
   my ($trie,%args) = @_;
-  my $ilabs = defined($args{ilabels})  ? $args{ilabels} : $trie->gfsmInputLabels();
+  my $ilabs = defined($args{ilabels})  ? $args{ilabels} : $trie->gfsmInputLabels(undef,%args);
   my $fsm   = defined($args{fsm})      ? $args{fsm}     : Gfsm::Automaton->newTrie();
   $fsm->is_transducer(0);
   $fsm->is_weighted(0);
   $fsm->root(0);
-  my ($q,$qah,$a,$qto);
+  my ($q,$qah,$a,$alab,$qto);
   foreach $q (0..($trie->{nq}-1)) {
     if (defined($qah = $trie->{goto}[$q])) {
       while (($a,$qto)=each(%$qah)) {
-	$fsm->add_arc($q,$qto, $ilabs->get_label($a),Gfsm::epsilon(), 0);
+	$alab = $ilabs->get_label($a);
+	$fsm->add_arc($q,$qto, $alab,$alab, 0);
       }
     }
     if (exists($trie->{out}{$q})) {
@@ -233,7 +242,7 @@ sub gfsmAutomaton {
 ##     dosort=>$bool,        ##-- sort automaton? (default=yes)
 sub gfsmTransducer {
   my ($trie,%args) = @_;
-  my $olabs = defined($args{olabels}) ? $args{olabels} : $trie->gfsmOutputLabels();
+  my $olabs = defined($args{olabels}) ? $args{olabels} : $trie->gfsmOutputLabels(undef,%args);
   my $fsm   = $trie->gfsmAutomaton(%args);
   my $out2str = $args{out2str};
   $fsm->is_transducer(1);
