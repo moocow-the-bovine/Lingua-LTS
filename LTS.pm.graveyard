@@ -1,0 +1,702 @@
+## -*- Mode: CPerl -*-
+
+##--------------------------------------------------------------
+
+sub expandTrie {
+  my ($lts,$trie,%args) = @_;
+
+  my $debug   = exists($args{debug}) ? $args{debug} : 1;
+  my $classes = $lts->{classes};
+  my $goto    = $trie->{goto};         ##-- literal (array)
+  #my $cgoto   = $trie->{cgoto} = [];  ##-- class-based (hash)
+  my $ccgoto  = $trie->{ccgoto} = [];  ##-- literal from class: $q => { $c=>\@cgoto_qc, ... }
+  my $out     = $trie->{out};
+  my $joinout = $args{joinout};
+
+  ##-- get reverse class-map $char => \@classes
+  my $c2class = {};
+  my ($class,$cc);
+  foreach $class (keys %$classes) {
+    foreach $cc (keys(%{$classes->{$class}})) {
+      push(@{$c2class->{$cc}}, $class);
+    }
+  }
+
+  ##-- DEBUG
+  if ($debug) {
+    our $qlabs   = $trie->gfsmStateLabels(undef,out2str=>\&out2str_ruleids);
+    our $qlabs_p = $trie->gfsmStateLabels(undef,out2str=>undef);
+    our $ilabs   = $trie->gfsmInputLabels();
+  }
+
+  ##-- Phase 1:
+  ##   + separate class-goto function ($ccgoto) from literal-goto function ($goto)
+  ##   + breadth-first
+  my ($q,$gotoq,$ccgotoq,$class,$cc,$qto_class);
+  foreach $q (0..($trie->{nq}-1)) {
+    $gotoq   = $goto->[$q];
+    $ccgotoq = $ccgoto->[$q] = {};
+    ##-- investigate all outgoing class-arcs
+    foreach $class (grep {exists($classes->{$_})} keys(%$gotoq)) {
+      ##-- extract class arc to $cgoto
+      $qto_class = $gotoq->{$class};
+      delete($gotoq->{$class});
+      ##-- extract literals from class arcs to $ccgoto
+      foreach $cc (keys(%{$classes->{$class}})) {
+	push(@{$ccgotoq->{$cc}}, $qto_class);
+      }
+    }
+  }
+
+  ##-- Phase 2: recursively sanitize the trie by path-"copying" (breadth-first)
+  my @fifo = qw(0,0); ##-- ($src1,$dst1, ...)
+  my ($qsrc,$qdst, $gotoqsrc,$gotoqdst, $ccgotoqsrc,$ccgotoqdst);
+  my ($c, $qto_src,$qto_dst, $qto_class_src,$qto_class_dst);
+  my $qmax = $trie->{nq};
+  while (@fifo) {
+    ($qsrc,$qdst) = splice(@fifo,0,2);
+    $gotoqsrc   = $goto->[$qsrc];
+    $gotoqdst   = $goto->[$qdst];
+    $ccgotoqsrc = $ccgoto->[$qsrc];
+    $ccgotoqdst = $ccgoto->[$qdst];
+
+    ##-- join outputs
+    if ($qsrc != $qdst && defined($joinout)) {
+      $out->{$qdst} = $joinout->($out->{$qdst}, $out->{$qsrc});
+    }
+
+    ##-- check matches: literal->*
+    while (($c,$qto_src)=each(%$gotoqsrc)) {
+      if (defined($qto_dst=$gotoqdst->{$c})) {
+	##-- literal->literal
+	push(@fifo, $qto_src=>$qto_dst);
+      }
+      if (defined($qto_class_dst=$ccgotoqdst->{$c})) {
+	##-- literal->class
+	foreach $qto_dst (@$qto_class_dst) {
+	  push(@fifo, $qto_dst=>$qmax, $qto_src=>$qmax);
+	  ++$qmax;
+	  ##-- ???
+	}
+      }
+      if (!defined($qto_dst) && !defined($qto_class_dst)) {
+	##-- literal->nothing: copy
+	push(@fifo, $qto_src=>$qmax);
+	$gotoqdst->{$c} = $qmax;
+	++$qmax;
+      }
+    }
+  }
+  $trie->{nq} = $qmax;
+
+
+  #return ($dtrie,$dfa,$labs); ##-- return pseudo-trie
+  return $dtrie;
+}
+
+##--------------------------------------------------------------
+
+sub expandTrie0 {
+  my ($lts,$trie,%args) = @_;
+
+  my $debug   = exists($args{debug}) ? $args{debug} : 1;
+  my $classes = $lts->{classes};
+  my $goto    = $trie->{goto};        ##-- literal (array)
+  my $out     = $trie->{out};
+  my $nfa     = Gfsm::Automaton->new;
+  $nfa->is_deterministic(0);
+  $nfa->is_transducer(0);
+  $nfa->is_weighted(0);
+  $nfa->sort_mode(Gfsm::ASMNone);
+  $nfa->root(0);
+
+  ##-- DEBUG
+  if ($debug) {
+    our $qlabs   = $trie->gfsmStateLabels(undef,out2str=>\&out2str_ruleids);
+    our $qlabs_p = $trie->gfsmStateLabels(undef,out2str=>undef);
+    our $ilabs   = $trie->gfsmInputLabels();
+  }
+
+  ##-- Phase 1:
+  ##   + generate non-deterministic fsa
+  my ($q,$c,$clab,$qto);
+  my $labs = Gfsm::Alphabet->new;
+  $labs->insert('<eps>',0);
+  foreach $q (0..($trie->{nq}-1)) {
+    $nfa->is_final($q,1) if (exists($out->{$q}));
+    while (($c,$qto)=each(%{$goto->[$q]})) {
+      if (exists($classes->{$c})) {
+	##-- expand class
+	foreach $cc (keys(%{$classes->{$c}})) {
+	  $clab = $labs->get_label($cc);
+	  $nfa->add_arc($q,$qto, $clab,$clab, 0);
+	}
+      }
+      else {
+	##-- literal arc
+	$clab = $labs->get_label($c);
+	$nfa->add_arc($q,$qto, $clab,$clab, 0);
+      }
+    }
+  }
+
+  ##-- determinize
+  my $dfa = $nfa->determinize();
+  $nfa->arcsort(Gfsm::ASMLower());
+  $dfa->arcsort(Gfsm::ASMLower());
+  #$dfa->_connect;
+  #$dfa->renumber_states;
+
+  if ($debug) {
+    ;
+    #viewfsm($nfa,lower=>$labs,states=>$qlabs,title=>'NFA',bg=>1);
+    #viewfsm($dfa,lower=>$labs,states=>$qlabs,title=>'DFA',bg=>1);
+  }
+
+  ##-- Phase 2: construct dfa index ($dgoto)
+  my $laba   = $labs->asArray();
+  my $dgoto  = [];
+  my $drgoto = []; ##-- $q => join(' ', $qfrom, $a, ...)
+  my $dfinal = {};
+  my $ai = Gfsm::ArcIter->new();
+  my ($dgotoq);
+  foreach $q (0..($dfa->n_states()-1)) {
+    ##-- index delta (dgoto)
+    $dgotoq  = $dgoto->[$q] = {};
+    for ($ai->open($dfa,$q); $ai->ok; $ai->next) {
+      $qto = $ai->target;
+      $c   = $laba->[$ai->lower];
+      $dgotoq->{$c} = $qto;
+      if (defined($drgoto->[$qto])) { $drgoto->[$qto] .= " $q $c"; }
+      else                          { $drgoto->[$qto]  = "$q $c";  }
+    }
+    ##-- check for final states
+    $dfinal->{$q} = undef if ($dfa->is_final($q));
+  }
+
+  ##-- Phase 3: construct output function for dfa
+  my @fifo = (0,$dfa->root);
+  my $nfaout = $trie->{out};
+  my $dfaout = {};
+  my $joinout = $args{joinout};
+  my ($qnfa,$qdfa);
+  while (@fifo) {
+    ($qnfa,$qdfa) = splice(@fifo,0,2);
+
+    ##-- join outputs: out($qdfa) := UNION(out($qdfa), out($qnfa))
+    if (defined($joinout)) {
+      $dfaout->{$qdfa} = $joinout->($dfaout->{$qdfa}, $nfaout->{$qnfa});
+    }
+
+    ##-- enqueue successors (literal)
+    $gotoqdfa = $dgoto->[$qdfa];
+    for ($ai->open($nfa,$qnfa); $ai->ok; $ai->next) {
+      push(@fifo, $ai->target, $gotoqdfa->{$laba->[$ai->lower]});
+    }
+  }
+
+  ##-- Phase 4: manually construct a trie for the dfa
+  our $dtrie = Lingua::LTS::Trie->new(
+				      goto=>$dgoto,
+				      rgoto=>$drgoto,
+				      out=>$dfaout,
+				      chars=>{ map {$_=>undef} @$laba[1..$#$laba] },
+				      nq=>$dfa->n_states(),
+				      cw=>$trie->{cw},
+				      epsilon=>$trie->{epsilon},
+				     );
+
+  if (0 && $debug) {
+    our $qlabs_dfa = Gfsm::Alphabet->new();
+    $qlabs_dfa->insert("q$_".out2str_ruleids($dfaout->{$_})) foreach (0..($dfa->n_states()-1));
+
+    our $qlabs_dfa_short = Gfsm::Alphabet->new();
+    $qlabs_dfa->insert("q$_".out2str_ruleids_short($dfaout->{$_})) foreach (0..($dfa->n_states()-1));
+
+    #viewfsm($nfa,lower=>$labs,states=>$qlabs,title=>'NFA',bg=>1);
+    #viewfsm($dfa,lower=>$labs,states=>$qlabs_dfa,title=>'DFA',bg=>1);
+
+    $dtrie->viewps(ilabels=>$labs,out2str=>\&out2str_ruleids,title=>'DFA Trie',bg=>1);
+  }
+
+  #return ($dtrie,$dfa,$labs); ##-- return pseudo-trie
+  return $dtrie;
+}
+
+##--------------------------------------------------------------
+sub expandTrie {
+  my ($lts,$trie,%args) = @_;
+
+  my $classes = $lts->{classes};
+  my $goto    = $trie->{goto};        ##-- literal (array)
+  my $cgoto   = $trie->{cgoto} = {};  ##-- class-based (array)
+
+  ##-- get reverse class-map $char => \@classes
+  my $c2class = {};
+  my ($class,$cc);
+  foreach $class (keys %$classes) {
+    foreach $cc (keys(%{$classes->{$class}})) {
+      push(@{$c2class->{$cc}}, $class);
+    }
+  }
+
+  ##-- Phase 1:
+  ##   + separate class-goto function ($cgoto) from literal-goto function ($goto)
+  ##   + initialize copy stack where conflicts occur
+  ##   + breadth-first
+  my @fifo = (0);      ##-- bfs fifo
+  my @copystack = qw();  ##-- copy stack ($qsrc1,$qdst1, ...)
+  my ($q,$gotoq,$qto_class,$qto_cc);
+  while (defined($q=shift(@fifo))) {
+    $gotoq  = $goto->[$q];
+
+    ##-- investigate all outgoing class-arcs
+    foreach $class (grep {exists($classes->{$_})} keys(%$gotoq)) {
+      ##-- extract class arc to $cgoto
+      $qto_class = $cgoto->{$q}{$class} = $gotoq->{$class};
+      delete($gotoq->{$class});
+
+      ##-- initialize copy stack
+      foreach $cc (keys(%{$classes->{$class}})) {
+	if (defined($qto_cc=$gotoq->{$cc})) {
+	  ##-- literal arc exists: must copy
+	  push(@copystack, $qto_class, $qto_cc);
+	}
+      }
+      ##-- enqueue class-arc targets
+      push(@fifo, $qto_class);
+    }
+    ##-- enqueue literal targets
+    push(@fifo, values(%$gotoq));
+  }
+
+  ##-- Phase 2: recursive copy
+  my ($qsrc,$qdst, $gotoqsrc,$gotoqdst, $cgotoqsrc,$cgotoqdst, %qchars);
+  my ($qto_dst_c,$qto_src_c, @cclasses,$class_src,$class_dst);
+  my $qmax = $trie->{nq};
+  while (@copystack) {
+    ($qsrc,$qdst) = splice(@copystack,$#copystack-1,2);
+    $gotoqsrc  = $goto->[$qsrc];
+    $cgotoqsrc = $cgoto->{$qsrc};
+    $gotoqdst  = $goto->[$qdst];
+    $cgotoqdst = $cgoto->{$qdst};
+    %qchars = map { $_=>undef } (
+				 keys(%$gotoqsrc)
+				 keys(%$gotoqdst),
+				 ($cgotoqsrc
+				  ? (map { keys(%{$classes->{$_}}) } keys(%$cgotoqsrc))
+				  : qw()),
+				 ($cgotoqdst
+				  ? (map { keys(%{$classes->{$_}}) } keys(%$cgotoqdst))
+				  : qw()),
+				);
+    ##-- investigate all possible outgoing characters
+    foreach $c (keys %qchars) {
+      @cclasses = $c2class->{$c} ? @{$c2class->{$c}} : qw();
+      if (defined($qto_dst_c=$qgotodst->{$c})) {
+	##-- dst:literal: ($qdst --$c--> $qto_dst_c)
+	if (defined($qto_src_c=$qgotosrc->{$c})) {
+	  ##-- src:literal: ($qsrc --$c--> $qto_src),        dst:literal: ($qdst --$c--> $qto_dst)
+	  push(@copystack, $qto_src_c, $qto_dst_c);
+	}
+	foreach $class_src (grep {exists($cgotoqsrc->{$_})} @cclasses) {
+	  ##-- src:class: ($qsrc --$class_src--> $qto_src),  dst:literal: ($qdst --$c--> $qto_dst)
+	  push(@copystack, $cgotoqsrc->{$class_src}, $qto_dst_c);
+	}
+      }
+      foreach $class_dst (grep {exists($cgotoqdst->{$_})} @cclasses) {
+	$qto_dst_c = $cgotoqdst->{$class_dst};
+	##-- dst:class: ($qdst --$class_dst--> $qto_dst)
+	if (defined($qto_src_c=$qgotosrc->{$c})) {
+	  ##-- src:literal: ($qsrc --$c--> $qto_src),        dst:class: ($qdst --$class_dst--> $qto_dst)
+	  $gotoqsrc->{$c} = ???
+	  push(@copystack, $qmax,$qto_dst_c, $qmax,$qto_src_c);
+	  $qmax++;
+	}
+      }
+    }
+  }
+  $trie->{nq}=$qmax;
+}
+
+##--------------------------------------------------------------
+
+  ##-- Phase 1:
+  ##   + separate class-goto function ($cgoto) from literal-goto function ($goto)
+  ##   + DO NOT expand classes (it might not really be kosher)
+  ##   + DO NOT initialize copy stack where conflicts occur
+  ##   + breadth-first
+  my @fifo = (0);      ##-- bfs fifo
+  my @src2dst = qw();  ##-- @src2dst: copy stack ($qsrc1,$qdst1, ...)
+  my ($q,@qclasses,$class,$c,$cc,$qto_class,$qto_cc);
+  while (defined($q=shift(@fifo))) {
+    $gotoq  = $goto->[$q];
+    $cgotoq = $cgoto->[$q] = {};
+
+    ##-- investigate all outgoing class-arcs
+    @qclasses = grep {exists($classes->{$_})} keys(%$gotoq);
+    foreach $class (@qclasses) {
+      ##-- extract class arc to $cgoto
+      $qto_class = $cgotoq->{$class} = $gotoq->{$class};
+      delete($gotoq->{$class});
+
+      ##-- initialize copy stack
+      foreach $cc (keys(%{$classes->{$class}})) {
+	if (defined($qto_cc=$gotoq->{$cc})) {
+	  ##-- literal arc exists: must copy
+	  push(@src2dst, $qto_class, $qto_cc);
+	}
+      }
+    }
+
+    ##-- investigate all arc targets
+    push(@fifo, values(%$gotoq), values(%$cgotoq));
+  }
+
+##--------------------------------------------------------------
+
+  ##-- get reverse class-map $char => \@classes
+  my $c2class = {};
+  my ($class,$cc);
+  foreach $class (keys %$classes) {
+    foreach $cc (keys(%{$classes->{$class}})) {
+      push(@{$c2class->{$cc}}, $class);
+    }
+  }
+
+  ##-- get inheritance map: %q2super = ($q_literal=>{$q_inherited=>undef,...}, ...)
+  my %q2super = qw();
+  my ($q,$c,$qto);
+  foreach $q (0..($trie->{nq}-1)) {
+    $gotoq         = $goto->[$q];
+    @gotoq_classes = grep {exists($classes->{$_})} keys(%$gotoq);
+    foreach $class (@gotoq_classes) {
+      $qto_class = $gotoq->{class};
+      foreach $cc (grep {exists($gotoq->{$_})} keys(%{$classes->{$class}})) {
+	##-- equivalent arc found: ($q --${class}--> $qto_class) ~= ($q--${cc}--> $qto_cc)
+	$q2super{$gotoq->{$cc}}{$qto_class} = undef;
+      }
+    }
+  }
+
+  ##-- get arc-transitive closure of inheritance map (bfs)
+  my @fifo = (0);
+  my ($qsuper);
+  while (defined($q=shift(@fifo))) {
+    $gotoq = $goto->[$q];
+    while (($c,$qto)=each(%$gotoq)) {
+      push(@fifo,$qto);
+      if (exists($q2super{$q})) {
+	foreach $qsuper (keys(%{$q2super{$q}})) {
+	  $q2super->{$qto}{$goto->[$qsuper]{$c}}
+	}
+      }
+    }
+  }
+
+  ##-- get inheritance-transitive closure of inheritance map
+  my ($changed,$qsupers,$nsupers);
+  while (($q,$qsupers)=each(%q2super)) {
+    $changed=1;
+    while ($changed) {
+      $nsupers = scalar(keys(%$qsupers));
+      foreach $qsuper (keys(%$qsupers)) {
+	@$qsupers{keys(%{$q2super->{$qsuper}})}=undef;
+      }
+      $changed = scalar(keys(%$qsupers))!=$nsupers;
+    }
+  }
+
+
+##--------------------------------------------------------------
+
+  my @qpass = qw();                                   ##-- states to investigate at this pass
+  my %qnext = (map {$_=>undef} (0..($trie->{nq}-1))); ##-- states to investigate at next pass
+  my @
+  my ($q,@gotoq_classes,%gotoq_equiv,$qto_class,$c,$cc,$qto_cc);
+  while (%qnext) {
+    @qpass = sort {$a<=>$b} keys(%qnext );
+    %qnext = qw();
+    while (defined($q=shift(@qpass))) {
+      $gotoq         = $goto->[$q];
+      @gotoq_classes = grep {exists($classes->{$_})} keys(%$gotoq);
+      %gotoq_equiv   = qw(); ##-- maps $qto_literal => $qto_equivalent_class
+      foreach $class (@gotoq_classes) {
+	##-- class arcs: ($q --${class}--> $qto_class)
+	$qto_class = $gotoq->{class};
+	foreach $cc (%{$classes->{$class}}) {
+	  ##-- expanded arcs: ($q--${cc}--> $qto_cc) s.t. $cc \in $class
+	  if (!exists($gotoq->{$cc})) {
+	    ##-- no matching literal arc: set $qto_cc := $qto_class
+	    $gotoq->{$cc} = $qto_class;
+	  } else {
+	    ##-- matching literal arc: set $qto_cc := $goto->[$q]{$cc}
+	    @gotoq_equiv{$gotoq->{$cc}} = $qto_class;  ##-- mark state for dup
+	    $qnext{$gotoq->{$cc}} = undef;             ##-- mark state for investigation
+	  }
+	}
+      }
+      ##-- all class arcs have been expanded in $q: delete 'em
+      delete(@$gotoq{@gotoq_classes});
+
+      ##-- duplicate flagged successors
+      while (($qto_cc,$qto_class)=each(%gotoq_equiv)) {
+	???;
+      }
+    }
+  }
+
+
+##~~~~~~~~~ BUGGY ~~~~~~~~~~~~~
+sub gfsmTransducer_buggy {
+  my ($lts,%args) = @_;
+  my $ilabs = $args{ilabels} ? $args{ilabels} : $lts->gfsmLabels();
+  my $olabs = $args{olabels} ? $args{olabels} : $ilabs;
+  my $acpm  = $lts->{acpm};
+  my $goto  = $acpm->{goto};
+  my $rgoto = $acpm->{rgoto};
+
+  print STDERR (ref($lts), "::gfsmTransducer(): mapping output rules to states (backward)... ")
+    if ($args{verbose});
+
+  ##-- Phase 1:
+  ##    + map output rules to the states at which they would apply,
+  ##      factoring out input and right-hand side
+
+  ##-- $q=>{ pack('S4L', ${in_begin}, ${in_end}, ${rhs_end}, ${nread}, ${rulid}), ... }
+  ##   + all positions are encoded as substr() indices in address($q)
+  my $q2rulpos = $lts->{q2rulpos} = [];
+  my $rules = $lts->{rules};
+  my ($q,$qout,$rulid,$rul, $lenL,$lenLI,$lenLIR,$nread,$r);
+  while (($q,$qout)=each(%{$acpm->{out}})) {
+    foreach $rulid (keys %$qout) {
+      $rul    = $rules->[$rulid];
+      $lenL   = @{$rul->{lhs}};
+      $lenLI  = $lenL + @{$rul->{in}};
+      $lenLIR = $lenLI + @{$rul->{rhs}};
+
+      ##-- back up, adopting backwards
+      for ($nread=$lenLIR, $r=$q; $nread > 0 && defined($r); $nread--) {
+	$q2rulpos->[$r]{pack('S4L', $lenL, $lenLI, $lenLIR, $nread, $rulid)} = undef;
+	$r = (split(/ /,$rgoto->[$r]))[0];
+      }
+    }
+  }
+
+  print STDERR ("done.\n",
+		ref($lts), "::gfsmTransducer(): eliminating overlap & inheriting forward... ")
+    if ($args{verbose});
+
+  ##-- Phase 2:
+  ##    + eliminate redundant rules (overlap)
+  ##    + inherit *completed* rules from $q to $qto on ($q --$c--> $qto)
+  my @fifo = (0);
+  my ($rp,$c,$qto, @rps,$badi,%rpibad);
+  my ($rpi1,$lenL1,$lenLI1,$lenLIR1,$nread1,$rulid1,$begin1,$end1);
+  my ($rpi2,$lenL2,$lenLI2,$lenLIR2,$nread2,$rulid2,$begin2,$end2);
+  while (defined($q=shift(@fifo))) {
+    ##-- eliminate redundant rules (overlap) in $q2rulpos
+    @rps    = defined($q2rulpos->[$q]) ? keys(%{$q2rulpos->[$q]}) : qw();
+    %rpibad = qw();
+    foreach $rpi1 (1..$#rps) {
+      next if (exists($rpibad{$rpi1}));
+      ($lenL1,$lenLI1,$lenLIR1,$nread1,$rulid1) = unpack('S4L', $rps[$rpi1]);
+      next if ($nread1 < $lenLIR1);   ##-- unfinished: keep it
+      ($begin1,$end1) = ($lenL1-$nread1, $lenLI1-$nread1);
+      foreach $rpi2 (0..($rpi1-1)) {
+	next if (exists($rpibad{$rpi2}));
+	($lenL2,$lenLI2,$lenLIR2,$nread2,$rulid2) = unpack('S4L', $rps[$rpi2]);
+	next if ($nread2 < $lenLIR2); ##-- unfinished: keep it
+	($begin2,$end2) = ($lenL2-$nread2, $lenLI2-$nread2);
+
+	if ($begin1==$begin2 && $rulid1 != $rulid2) {
+	  ##-- identical input begin position: prefer best rulid
+	  $badi = $rulid1 < $rulid2 ? $rpi2 : $rpi1;
+	  $rpibad{$badi} = undef;
+	  delete($q2rulpos->[$q]{$rps[$badi]});
+	}
+	elsif ($begin1 < $begin2 && $end1 > $begin2) {
+	  ##-- overlap: rule1 << rule2
+	  $rpibad{$rpi2} = undef;
+	  delete($q2rulpos->[$q]{$rps[$rpi2]});
+	}
+	elsif  ($begin2 < $begin1 && $end2 > $begin1) {
+	  ##-- overlap: rule2 << rule1
+	  $rpibad{$rpi1} = undef;
+	  delete($q2rulpos->[$q]{$rps[$rpi1]});
+	}
+      }
+    }
+    @rps = keys(%{$q2rulpos->[$q]}) if (@rps);
+
+    ##-- process daughter states ($q --$c--> $qto)
+    while (($c,$qto)=each(%{$goto->[$q]})) {
+      push(@fifo,$qto) if ($qto != 0);
+      ##-- adopt completed rules forward from $q to $qto: buffer output
+      foreach $rp (@rps) {
+	($lenL,$lenLI,$lenLIR,$nread,$rulid) = unpack('S4L', $rp);
+	next if ($nread < $lenLIR); ##-- don't adopt incomplete rules
+	$q2rulpos->[$qto]{pack('S4L', $lenL,$lenLI,$lenLIR,$nread+1,$rulid)} = undef;
+      }
+    }
+  }
+
+  print STDERR ("done.\n",
+		ref($lts), "::gfsmTransducer(): completing delta()...",
+		#"\n",
+	       )
+    if ($args{verbose});
+
+  ##-- Phase 3
+  ##    + complete goto()
+  ##      struct: $delta->[$q] = { $c=>join(' ', $qto, @output), ... }
+  ##
+  my $delta = [];
+  my $outF  = []; ##-- $outF->[$q] => @output_on_eos
+  my @chars = keys(%{$acpm->{chars}});
+  push(@chars, '#')
+    if (!exists($acpm->{chars}{'#'}) && ($lts->{implicit_bos} || $lts->{implicit_eos}));
+  my $fail = $acpm->{fail};
+  my ($gotoq,$deltaq, @qrps, $rp1,$rp2, $q2,$goto_qc,@rps_qc,@out_qc);
+  my (@qin,$cin);
+  my $nQ=0;
+  foreach $q (0..($acpm->{nq}-1)) {
+    print STDERR '.' if ($args{verbose} && $nQ++ % 1000 == 0);
+
+    ##-- input arcs: $q --a:eps--> $goto->[$q]{$a}
+    $gotoq  = $goto->[$q];
+    $deltaq = $delta->[$q] = { map { $_=>$gotoq->{$_} } keys(%$gotoq) };
+
+    ##-- get safe output for $q
+    @qrps =
+      (
+       sort { $a->{begin} <=> $b->{begin} }
+       map {
+	 ($lenL1,$lenLI1,$lenLIR1,$nread1,$rulid1) = unpack('S4L', $_);
+	 ($nread1 >= $lenLIR1
+	  ? {
+	     lenL=>$lenL1,
+	     lenLI=>$lenLI1,
+	     lenLIR=>$lenLIR1,
+	     nread=>$nread1+1,
+	     rulid=>$rulid1,
+	     begin=>($lenL1-$nread1-1),
+	     end=>($lenLI1-$nread1-1),
+	    }
+	  : qw())
+       } keys(%{$q2rulpos->[$q]})
+      );
+
+    $outF->[$q] = [map { @{$lts->{rules}[$_->{rulid}]{out}} } @qrps];
+
+    ##-- get input (target) for q
+    @qin = map { @{$lts->{rules}[$_->{rulid}]{in}} } @qrps;
+
+    ##-- failure arcs: $q --eps:$out_qc--> $q2 --$c:eps--> $goto->[$q2]{$c}=$goto_qc
+    foreach $c (grep { !exists($deltaq->{$_}) } @chars) {
+      $q2 = $fail->[$q];
+      ##-- follow fail-paths for all completed inputs of $q
+      foreach $cin (@qin[1..$#qin]) {
+	$q2 = $fail->[$q2] while (!defined($goto_qc=$goto->[$q2]{$cin}));
+	$q2 = $goto_qc;
+      }
+      ##-- follow failure path for completed input path
+      $q2 = $fail->[$q2] while (!defined($goto_qc=$goto->[$q2]{$c}));
+
+      ##-- get allowable configurations @rps_qc for $q --$c:???--> $q2
+      @rps_qc = qw();
+    RP1:
+      foreach $rp1 (@qrps) {
+	($begin1,$end1,$rulid1) = @$rp1{qw(begin end rulid)};
+	foreach $rp2 (keys(%{$q2rulpos->[$goto_qc]})) {
+	  ($lenL2,$lenLI2,$lenLIR2,$nread2,$rulid2) = unpack('S4L', $rp2);
+	  next if ($nread2 < $lenLIR2); ##-- ignore incompletely read rules in fail sink state (?)
+	  ($begin2,$end2) = ($lenL2-$nread2, $lenLI2-$nread2);
+
+	  if ($begin1==$begin2 && $end1==$end2) {
+	    ##-- identical match: prefer best rulid
+	    next RP1 if ($rulid2 < $rulid1);
+	  }
+	  elsif ($begin1 < $begin2 && $end1 > $begin2) {
+	    ##-- overlap: rule1 << rule2
+	    warn("\n",
+		 ref($lts), "::gfsmTransducer(): Error: nonsensical overlap for q=$q, c=$c, qto=$goto_qc: ",
+		 "\n  > r1={$begin1..$end1} ~ $rulid1 : ", rule2str($lts->{rules}[$rulid1]),
+		 "\n  > r2={$begin2..$end2} ~ $rulid2 : ", rule2str($lts->{rules}[$rulid2]),
+		 "\n  > ")
+	  }
+	  elsif ($begin2 < $begin1 && $end2 > $begin1) {
+	    ##-- overlap: rule2 << rule1
+	    next RP1;
+	  }
+	}
+	push(@rps_qc, $rp1);
+      }
+
+      ##-- get contiguous output for allowable configurations
+      @out_qc = map {
+	@{$lts->{rules}[$_->{rulid}]{out}}
+      } sort { $a->{begin} <=> $b->{begin} } @rps_qc;
+
+      ##-- mark output arc
+      $deltaq->{$c} = join(' ',$goto_qc,@out_qc);
+    }
+  }
+
+  print STDERR ("done.\n",
+		ref($lts), "::gfsmTransducer(): constructing FST... ")
+    if ($args{verbose});
+
+  ##-- Phase 4: FST construction
+  my $fst = Gfsm::Automaton->new();
+  $fst->is_transducer(1);
+  $fst->is_weighted(0);
+  $fst->root($fst->ensure_state(0));
+
+  ##-- add designated EOS state
+  my ($qeos,$qmax,$eoslab);
+  $qeos = $acpm->{nq};
+  $qmax = $qeos+1;
+  $fst->add_state($qeos);
+  $fst->is_final($qeos,1);
+
+  ##-- add all states, arcs
+  my ($delta_qc, $i, $clab);
+  foreach $q (0..($acpm->{nq}-1)) {
+    ##-- add eos arcs: $q --eps:$outF[$q]--> $qeos
+    #if (!$lts->{implicit_eos}) {
+      @out_qc = @{$outF->[$q]};
+      $fst->add_arc($q, ($#out_qc <= 0 ? $qeos                         : ($qmax++)),
+		    0,  ($#out_qc >= 0 ? $olabs->get_label($out_qc[0]) : 0),
+		    0);
+      foreach $i (1..$#out_qc) {
+	$fst->add_arc($qmax-1, ($i==$#out_qc ? $qeos : ($qmax++)),
+		      0,       $olabs->get_label($out_qc[$i]),
+		      0);
+      }
+    #}
+
+    ##-- add arcs $q --$c:$out_qa--> $q2
+    $deltaq = $delta->[$q];
+    while (($c,$delta_qc)=each(%$deltaq)) {
+      ($qto,@out_qc) = split(/ /, $delta_qc);
+      $clab = $ilabs->get_label($c);
+
+      ##-- handle usual arcs
+      $fst->add_arc($q,    ($#out_qc <= 0 ? $qto                          : ($qmax++)),
+		    $clab, ($#out_qc >= 0 ? $olabs->get_label($out_qc[0]) : 0),
+		    0);
+      foreach $i (1..$#out_qc) {
+	$fst->add_arc($qmax-1, ($i==$#out_qc ? $qto : ($qmax++)),
+		      0,       $olabs->get_label($out_qc[$i]),
+		      0);
+      }
+    }
+  }
+
+  print STDERR "done.\n"
+    if ($args{verbose});
+
+  $fst->arcsort(Gfsm::ASMLower()) if ($args{dosort} || !exists($args{dosort}));
+  return $fst;
+}

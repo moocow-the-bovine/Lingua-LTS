@@ -210,7 +210,7 @@ sub matches {
 ##==============================================================================
 
 ## $labs = $acpm->gfsmInputLabels()
-## $labs = $acpm->gfsmInputLabels($labs)
+## $labs = $acpm->gfsmInputLabels($labs,%args)
 sub gfsmInputLabels {
   my ($acpm,$labs) = @_;
   $labs = $acpm->SUPER::gfsmInputLabels($labs);
@@ -243,6 +243,7 @@ sub gfsmAutomaton {
   $fsm->is_transducer(0);
   $fsm->is_weighted(0);
   $fsm->root(0);
+  $fsm->sort_mode(Gfsm::ASMNone()) if (defined($args{dosort}) && !$args{dosort});
   my ($q,$qah,$a,$alab,$qto);
   my $faillab = $ilabs->get_label($acpm->{failstr});
   foreach $q (0..($acpm->{nq}-1)) {

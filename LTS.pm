@@ -239,9 +239,294 @@ sub _acpm_joinout {
     @{$_[0]}{keys %{$_[1]}} = undef if (defined($_[1]));
     return $_[0];
   }
-  return {%{$_[1]}} if (defined($_[1]));
+  return defined($_[1]) ? {%{$_[1]}} : undef;
 }
 
+
+##==============================================================================
+## Methods: index generation: flex
+##==============================================================================
+
+## undef = $lts->toFlex($file_or_fh,%args);
+##  + %args:
+##      lacpm=>$lacpm,   ##-- -complete, +expanded (override $lts->{flex_lacpm})
+##      ontry=>\&sub,    ##-- called as $sub->($rul) on trial, should return C code string
+##      onreject=>\&sub, ##-- called as $sub->($rul) on reject, should return C code string
+##      onmatch=>\&sub,  ##-- called as $sub->($rul) on match, should return C code string
+##      defs=>$str,      ##-- additional definitions
+##      prerules=>$str,  ##-- pre-empting rules
+##      postrules=>$str, ##-- post-empting rules (may override default ECHO)
+##      code=>$str,      ##-- code (overrides default)
+sub toFlex {
+  my ($lts,$file, %args) = @_;
+  my $fh = ref($file) ? $file : IO::File->new(">$file");
+
+  $fh->print(
+	     ##-- Header
+	     "/*-*- Mode: Flex -*-*/\n\n",
+	     $lts->flexBanner("Header",%args), "\n",
+	     $lts->flexHeader(%args),
+	     "\n\n",
+	     ##-- Definitions
+	     $lts->flexBanner("Definitions",%args), "\n",
+	     ($args{defs} ? ($args{defs}."\n") : qw()),
+	     "\n",
+	     $lts->flexDefinitions(%args),
+	     "\n",
+	     ##-- Rules (LHS)
+	     "%%\n",
+	     "\n",
+	     ($args{prerules} ? ($args{prerules}."\n") : qw()),
+	     "\n",
+	     $lts->flexRulesLHS(%args),
+	     "\n",
+	     $lts->flexRulesRHS(%args),
+	     "\n",
+	     ($args{postrules} ? ($args{postrules}."\n\n") : qw()),
+	     "\n",
+	     $lts->flexRulesDefault(%args),
+	     "\n",
+	     ##-- Code
+	     "%%\n\n",
+	     $lts->flexBanner("Code"), "\n",
+	     (exists($args{code}) ? $args{code} : $lts->flexCode(%args)),
+	     "\n",
+	    );
+}
+
+## @bannerlines = $lts->flexBanner($text,%args)
+sub flexBanner {
+  my ($lts,$text,%args) = @_;
+  return (
+	  "/*".('-' x 72)."\n",
+	  " * $text\n",
+	  " */\n",
+	 );
+}
+
+## @hdrlines = $lts->flexHeader(%args)
+##  + requires: $lts->{flex_lacpm} : +reversed, -complete, +expanded
+##  + populates: $lts->{flex_lout2id}, $lts->{flex_id2lout}, $lts->{flex_lcs}
+##  + %args:
+##      lacpm=>$lacpm,   ##-- -complete, +expanded (override $lts->{flex_lacpm})
+sub flexHeader {
+  my ($lts,%args) = @_;
+
+  ##-- LACPM
+  my $lacpm   = $args{lacpm} ? $args{lacpm} : $lts->{flex_lacpm};
+  $lacpm = $lts->{flex_lacpm} = $lts->subACPM(which=>[qw(lhs)], reversed=>1, complete=>0)
+    if (!$lacpm);
+
+  my $c2lab = $lts->{flex_c2lab} = {"\0"=>0};
+  my $lab2c = $lts->{flex_lab2c} = ["\0"];
+  foreach (sort(keys(%{$lacpm->{chars}}))) {
+    $c2lab->{$_} = scalar(@$lab2c);
+    push(@$lab2c, $_);
+  }
+
+  ##-- header
+  my ($q,%rulids);
+  return (
+	  "%{\n",
+	  "#include <stdio.h>\n",
+	  "\n",
+	  (
+	   ##-- c2lab
+	   "static const unsigned int c2lab[".(2**(8*$lacpm->{cw}))."] = {\n",
+	   join(",",
+		map {
+		  (exists($c2lab->{chr($_)}) ? $c2lab->{chr($_)} : -1)
+		} (0..(2**(8*$lacpm->{cw})-1))
+	       ),
+	   " };\n",
+	  ),
+	  "\n",
+
+	  (##-- goto
+	   "static const unsigned int lgoto[$lacpm->{nq}][", (scalar(@$lab2c)), "]",
+	   " = {\n",
+	   join(",\n",
+		map {
+		  $q=$_;
+		  ("  { "
+		   .join(',',
+			 map {
+			   (defined($lacpm->{goto}[$q]{$lab2c->[$_]})
+			    ? $lacpm->{goto}[$q]{$lab2c->[$_]}
+			    : -1)
+			 } (0..($#$lab2c))
+			)
+		   ." }")
+		} (0..($lacpm->{nq}-1))),
+	   " };\n",
+	  ),
+
+	  (##-- fail
+	   "static const unsigned int lfail[$lacpm->{nq}]",
+	   " = { ",
+	   join(",", map { $lacpm->{fail}[$_] } (0..($lacpm->{nq}-1))),
+	   " };\n",
+	  ),
+	  "\n",
+
+	  (##-- out
+	   "static const unsigned char lout[$lacpm->{nq}][",scalar(@{$lts->{rules}}),"]",
+	   " = {\n",
+	   (
+	    map {
+	      $q=$_;
+	      %rulids = map {$_=>undef} unpack('S*',$lacpm->{out}{$q});
+	      ('{ '
+	       .join(',', map { exists($rulids{$_}) ? 1 : 0 } (0..($#{$lts->{rules}})))
+	       ." }\n")
+	    } (0..($lacpm->{nq}-1))
+	   )
+	   ." };\n",
+	  ),
+
+	  (##-- forward decl
+	   "static llookup ... ?!?!?!?",
+	  ),
+
+	  "%}",
+	 );
+}
+
+## @deflines = $lts->flexDefinitions(%args)
+sub flexDefinitions {
+  my ($lts,%args) = @_;
+  ##-- class definitions
+  return map { $lts->flexClassDef($_) } sort(keys(%{$lts->{classes}}));
+}
+
+##-- @deflines = $lts->flexClassDef($class)
+sub flexClassDef {
+  my ($lts,$class) = @_;
+  my $cname = flexClassName($class);
+  return
+    (flexClassName($class)
+     ."\t["
+     .join('', sort keys(%{$lts->{classes}{$class}}))
+     ."]\n");
+}
+sub flexClassDef0 {
+  my ($lts,$class) = @_;
+  my $cname = flexClassName($class);
+  return
+    (flexClassName($class)
+     ."\t("
+     .join('|', map { '"'.$_.'"' } sort keys(%{$lts->{classes}{$class}}))
+     .")\n");
+}
+
+
+## @rules_lines = $lts->flexRulesLHS(%args)
+sub flexRulesLHS {
+  my ($lts,%args) = @_;
+
+  my $lacpm = $lts->{flex_lacpm};
+  my $lout2id = $lts->{flex_lout2id};
+  my ($lc,$q,$lid);
+  return (
+	  map {
+	    $lc  = $_;
+	    $q   = $lacpm->a2q($lc);
+	    $lid = $lout2id->{$lacpm->{out}{$q}};
+	    ($lts->flexStringLiteral(@$lc)
+	     ."\t{ lhsid=$lid;"
+	     .($args{onlhs} ? $args{onlhs}->($lc) : '')
+	     ." REJECT; }\n")
+	  } @{$lts->{flex_lcs}}
+	 );
+}
+
+## @rhs_rule_lines = $lts->flexRulesRHS(%args)
+sub flexRulesRHS {
+  my ($lts,%args) = @_;
+  my ($rul);
+  return (
+	  map {
+	    $rul=$_;
+	    (''
+	     .$lts->flexStringLiteral(@{$rul->{in}})
+	     .(@{$rul->{rhs}}
+	       ? ("/".$lts->flexString(@{$rul->{rhs}}))
+	       : '')
+	     ."\t{ "#."\n\t
+	     .($args{ontry} ? $args{ontry}->($rul) : '')
+	     ." if (!lid2rulid[lhsid][$rul->{id}]) {"
+	     .($args{onreject} ? $args{onreject}->($rul) : '')
+	     .' REJECT; }'
+	     ."\t "
+	     .($args{onmatch}
+	       ? $args{onmatch}->($rul)
+	       : ('fputs("'.join(' ', @{$rul->{out}}).' ", stdout);'))
+	     ." }\n"
+	     .'')
+	  } (@{$lts->{rules}})
+	 );
+}
+
+## @default_rule_lines = $lts->flexRulesDefault(%args)
+sub flexRulesDefault {
+  my ($lts,%args) = @_;
+
+  return (
+	  ##-- DUMMY
+	  #".\t{ ECHO; printf(\"(%d)\", lhsid); lhsid=0; }\n",
+	  #".\t{ lhsid=0; }\n",
+	  ".\t{ ECHO; }\n",
+	 );
+}
+
+## @code_lines = $lts->flexCode(%args)
+sub flexCode {
+  my ($lts,%args) = @_;
+  return (
+	  "int main (void) { yylex(); return 0; }\n",
+	  "\n",
+	  "int yywrap (void) { return 1; }\n",
+	 );
+}
+
+
+##-- flex-safe class-name
+## $name = flexClassName($classname);
+sub flexClassName {
+    my $class =shift;
+    if    ($class eq '*') { return '_STAR_'; }
+    elsif ($class eq '+') { return '_PLUS_'; }
+    return $class;
+}
+
+##-- flex-safe symbol string
+## $string = $lts->flexString(@symbols)
+sub flexString {
+  my ($lts,@syms) = @_;
+  return '""' if (!@syms);
+  return join('',
+	      map {
+		(exists($lts->{classes}{$_})
+		 ? ('{'.flexClassName($_).'}')
+		 : ('"'.$_.'"'))
+	      } @syms);
+}
+
+##-- flex-safe symbol string
+## $string = $lts->flexStringLiteral(@symbols)
+sub flexStringLiteral {
+  my ($lts,@syms) = @_;
+  return '"'.join('',@syms).'"';
+}
+
+##==============================================================================
+## Methods: index generation: dual-ACPM Gfsm
+##==============================================================================
+
+##-- looks correct, too expensive
+
+##--------------------------------------------------------------
+## Methods: index generation: Gfsm: Labels
 
 ## $labs = $lts->gfsmLabels
 ##   + requires: $lts->expand_alphabet()
@@ -261,263 +546,270 @@ sub gfsmSymbolsLines {
 	  $lts->symbols_lines('Phon', $lts->{phones}), "\n");
 }
 
-## $gfsmFST = $lts->gfsmFST(%args)
+##--------------------------------------------------------------
+## Methods: index generation: Gfsm: FST
+
+## $gfsmFST             = $lts->gfsmFST(%args)
+## ($fst,$ilabs,$olabs) = $lts->gfsmFST(%args)
 ##  + requires: $lts->{acpm} (NOT complete)
+##  + populates keys:
+##     fst=>$fst,
+##     fstilabs=>$ilabs,
+##     fstolabs=>$olabs,
 ##  + %args:
 ##     ilabels=>$ilabs, ##-- default = $lts->gfsmLabels()
 ##     olabels=>$olabs, ##-- default = $ilabs
+##     verbose=>$bool,  ##-- report verbosely
 *gfsmFST = \&gfsmTransducer;
 sub gfsmTransducer {
   my ($lts,%args) = @_;
-  my $ilabs = $args{ilabels} ? $args{ilabels} : $lts->gfsmLabels();
-  my $olabs = $args{olabels} ? $args{olabels} : $ilabs;
-  my $acpm  = $lts->{acpm};
-  my $goto  = $acpm->{goto};
-  my $rgoto = $acpm->{rgoto};
 
-  print STDERR (ref($lts), "::gfsmTransducer(): mapping output rules to states (backward)... ")
-    if ($args{verbose});
+  ##-------------------------
+  ## LHS
 
-  ##-- Phase 1:
-  ##    + map output rules to the states at which they would apply,
-  ##      factoring out input and right-hand side
+  ##-- LHS: generate ACPM
+  print STDERR (ref($lts), "::gfsmTransducer(): generating left-context ACPM... ") if ($args{verbose});
+  my $lacpm = $lts->subacpm(which=>[qw(lhs)]);
+  print STDERR ("done.\n") if ($args{verbose});
 
-  ##-- $q=>{ pack('S4L', ${in_begin}, ${in_end}, ${rhs_end}, ${nread}, ${rulid}), ... }
-  ##   + all positions are encoded as substr() indices in address($q)
-  my $q2rulpos = $lts->{q2rulpos} = [];
-  my $rules = $lts->{rules};
-  my ($q,$qout,$rulid,$rul, $lenL,$lenLI,$lenLIR,$nread,$r);
-  while (($q,$qout)=each(%{$acpm->{out}})) {
-    foreach $rulid (keys %$qout) {
-      $rul    = $rules->[$rulid];
-      $lenL   = @{$rul->{lhs}};
-      $lenLI  = $lenL + @{$rul->{in}};
-      $lenLIR = $lenLI + @{$rul->{rhs}};
+  ##-- LHS: build & adjust lacpm fst
+  print STDERR (ref($lts), "::gfsmTransducer(): building left-context FST... ") if ($args{verbose});
 
-      ##-- back up, adopting backwards
-      for ($nread=$lenLIR, $r=$q; $nread > 0 && defined($r); $nread--) {
-	$q2rulpos->[$r]{pack('S4L', $lenL, $lenLI, $lenLIR, $nread, $rulid)} = undef;
-	$r = (split(/ /,$rgoto->[$r]))[0];
-      }
+  ##-- LHS: FST: labels
+  my $lilabs   = $lacpm->gfsmInputLabels();
+  my $lilabs_a = $lilabs->asArray();
+  my $lolabs = $lacpm->gfsmOutputLabels();
+  my $nlolabs = $lolabs->size;
+  my @lisyms = grep { $_ ne '<eps>' && $_ ne '<fail>' } @$lilabs_a;
+  $lolabs->insert($_) foreach (@lisyms);
+  my $lolabs_h = $lolabs->asHash;
+  my $lolabs_a = $lolabs->asArray;
+
+  my $lfst = $lacpm->gfsmTransducer(ilabels=>$lilabs,olabels=>$lolabs,dosort=>0);
+  my $qmax = $lfst->n_states();
+  my $ai = Gfsm::ArcIter->new();
+  my ($q,$r);
+  foreach $q (0..($lacpm->{nq}-1)) {
+    ##-- replace arcs ($q --a:OutL($q)--> $qto) with ($q --a:OutL($q)--> $r=newState() --eps:a--> $qto)
+    for ($ai->open($lfst,$q); $ai->ok; $ai->next) {
+      $r = $qmax++;
+      $lfst->add_arc($r,$ai->target, 0,$lolabs_h->{$lilabs_a->[$ai->lower]}, 0);
+      $ai->upper($lolabs_h->{$lacpm->{out}{$q}});
+      $ai->target($r);
+    }
+  }
+  print STDERR ("done.\n") if ($args{verbose});
+
+
+  ##-------------------------
+  ## IN.RHS (reversed)
+
+  ##-- IN.RHS: generate ACPM
+  print STDERR (ref($lts), "::gfsmTransducer(): generating right-context ACPM... ") if ($args{verbose});
+  my $racpm = $lts->subacpm(which=>[qw(in rhs)], reversed=>1);
+  print STDERR ("done.\n") if ($args{verbose});
+
+  ##-- IN.RHS: build & adjust racpm fst
+  print STDERR (ref($lts), "::gfsmTransducer(): building right-context FST... ") if ($args{verbose});
+
+  ##-- IN.RHS: FST: labels
+  my $rilabs   = $lolabs;
+  my $rilabs_a = $rilabs->asArray;
+  my $rilabs_h = $rilabs->asHash;
+
+  my $rolabs   = $racpm->gfsmOutputLabels();
+  my $nrolabs  = $rolabs->size;
+  $rolabs->insert($_) foreach (@{$lolabs->asArray}[1..($nlolabs-1)]);
+  my $rolabs_h = $rolabs->asHash;
+
+  #my $colabs_d = Gfsm::Alphabet->new();
+  #$colabs_d->insert('<eps>',0);
+  #$colabs_d->insert('<none>',1);
+  #$colabs_d->insert(rule2str($lts->{rules}[$_]), $_+2) foreach (0..$#{$lts->{rules}});
+
+  ##-- IN.RHS: map ($packed_rulid == $rulid+1) => \@lolabs_containing_rulid
+  my $outid2lolabs = [[]];
+  my ($loseti,$prulid);
+  foreach $loseti (1..($nlolabs-1)) {
+    foreach $prulid (unpack('S*', $lolabs_a->[$loseti])) {
+      push(@{$outid2lolabs->[$prulid]}, $loseti);
     }
   }
 
-  print STDERR ("done.\n",
-		ref($lts), "::gfsmTransducer(): eliminating overlap & inheriting forward... ")
-    if ($args{verbose});
+  ##-- RHS: build & adjust racpm fst
+  my $rfst = $racpm->gfsmTransducer(ilabels=>$rilabs,olabels=>$rolabs,dosort=>0);
+  $qmax = $rfst->n_states();
+  my (%rdeltaq, $qto, $routid,$lolabids,%usedlolabs,$lolab);
+  foreach $q (0..($racpm->{nq}-1)) {
+    print STDERR "." if ($args{verbose} && $q % 512 == 0);
 
-  ##-- Phase 2:
-  ##    + eliminate redundant rules (overlap)
-  ##    + inherit *completed* rules from $q to $qto on ($q --$c--> $qto)
-  my @fifo = (0);
-  my ($rp,$c,$qto, @rps,$badi,%rpibad);
-  my ($rpi1,$lenL1,$lenLI1,$lenLIR1,$nread1,$rulid1,$begin1,$end1);
-  my ($rpi2,$lenL2,$lenLI2,$lenLIR2,$nread2,$rulid2,$begin2,$end2);
-  while (defined($q=shift(@fifo))) {
-    ##-- eliminate redundant rules (overlap) in $q2rulpos
-    @rps    = defined($q2rulpos->[$q]) ? keys(%{$q2rulpos->[$q]}) : qw();
-    %rpibad = qw();
-    foreach $rpi1 (1..$#rps) {
-      next if (exists($rpibad{$rpi1}));
-      ($lenL1,$lenLI1,$lenLIR1,$nread1,$rulid1) = unpack('S4L', $rps[$rpi1]);
-      next if ($nread1 < $lenLIR1);   ##-- unfinished: keep it
-      ($begin1,$end1) = ($lenL1-$nread1, $lenLI1-$nread1);
-      foreach $rpi2 (0..($rpi1-1)) {
-	next if (exists($rpibad{$rpi2}));
-	($lenL2,$lenLI2,$lenLIR2,$nread2,$rulid2) = unpack('S4L', $rps[$rpi2]);
-	next if ($nread2 < $lenLIR2); ##-- unfinished: keep it
-	($begin2,$end2) = ($lenL2-$nread2, $lenLI2-$nread2);
+    ##-- $rdeltaq{$qto} = $r
+    ##  + s.t. $r is a new intermediate state for arcs ($q --a:a--> $qto),
+    ##  + translated to ($q --a:eps--> $r --OutL:OutBest(OutL,$qto)--> $qto)
+    %rdeltaq = qw();
+    for ($ai->open($rfst,$q); $ai->ok; $ai->next) {
+      if (!exists($rdeltaq{$qto=$ai->target})) {
+	$rdeltaq{$qto} = $r = $qmax;
 
-	if ($begin1==$begin2 && $rulid1 != $rulid2) {
-	  ##-- identical input begin position: prefer best rulid
-	  $badi = $rulid1 < $rulid2 ? $rpi2 : $rpi1;
-	  $rpibad{$badi} = undef;
-	  delete($q2rulpos->[$q]{$rps[$badi]});
-	}
-	elsif ($begin1 < $begin2 && $end1 > $begin2) {
-	  ##-- overlap: rule1 << rule2
-	  $rpibad{$rpi2} = undef;
-	  delete($q2rulpos->[$q]{$rps[$rpi2]});
-	}
-	elsif  ($begin2 < $begin1 && $end2 > $begin1) {
-	  ##-- overlap: rule2 << rule1
-	  $rpibad{$rpi1} = undef;
-	  delete($q2rulpos->[$q]{$rps[$rpi1]});
-	}
-      }
-    }
-    @rps = keys(%{$q2rulpos->[$q]}) if (@rps);
+	##-- re-route arcs ($q --a:a--> $qto) ==> ($q --a:eps--> $r)
+	$ai->target($r);
+	$ai->upper(0);
+	$qmax++;
 
-    ##-- process daughter states ($q --$c--> $qto)
-    while (($c,$qto)=each(%{$goto->[$q]})) {
-      push(@fifo,$qto) if ($qto != 0);
-      ##-- adopt completed rules forward from $q to $qto: buffer output
-      foreach $rp (@rps) {
-	($lenL,$lenLI,$lenLIR,$nread,$rulid) = unpack('S4L', $rp);
-	next if ($nread < $lenLIR); ##-- don't adopt incomplete rules
-	$q2rulpos->[$qto]{pack('S4L', $lenL,$lenLI,$lenLIR,$nread+1,$rulid)} = undef;
-      }
-    }
-  }
-
-  print STDERR ("done.\n",
-		ref($lts), "::gfsmTransducer(): completing delta()...",
-		#"\n",
-	       )
-    if ($args{verbose});
-
-  ##-- Phase 3
-  ##    + complete goto()
-  ##      struct: $delta->[$q] = { $c=>join(' ', $qto, @output), ... }
-  ##
-  my $delta = [];
-  my $outF  = []; ##-- $outF->[$q] => @output_on_eos
-  my @chars = keys(%{$acpm->{chars}});
-  push(@chars, '#')
-    if (!exists($acpm->{chars}{'#'}) && ($lts->{implicit_bos} || $lts->{implicit_eos}));
-  my $fail = $acpm->{fail};
-  my ($gotoq,$deltaq, @qrps, $rp1,$rp2, $q2,$goto_qc,@rps_qc,@out_qc);
-  my (@qin,$cin);
-  my $nQ=0;
-  foreach $q (0..($acpm->{nq}-1)) {
-    print STDERR '.' if ($args{verbose} && $nQ++ % 1000 == 0);
-
-    ##-- input arcs: $q --a:eps--> $goto->[$q]{$a}
-    $gotoq  = $goto->[$q];
-    $deltaq = $delta->[$q] = { map { $_=>$gotoq->{$_} } keys(%$gotoq) };
-
-    ##-- get safe output for $q
-    @qrps =
-      (
-       sort { $a->{begin} <=> $b->{begin} }
-       map {
-	 ($lenL1,$lenLI1,$lenLIR1,$nread1,$rulid1) = unpack('S4L', $_);
-	 ($nread1 >= $lenLIR1
-	  ? {
-	     lenL=>$lenL1,
-	     lenLI=>$lenLI1,
-	     lenLIR=>$lenLIR1,
-	     nread=>$nread1+1,
-	     rulid=>$rulid1,
-	     begin=>($lenL1-$nread1-1),
-	     end=>($lenLI1-$nread1-1),
+	##-- get best output for each left-context set outL \in out(Q_L), outR($qto)
+	##   + add arcs: ($r --OutL:OutBest(OutL,$qto)--> $qto)
+	if ($racpm->{out}{$qto}) {
+	  %usedlolabs = qw();
+	  foreach $routid (unpack('S*', $racpm->{out}{$qto})) {
+	    $lolabids = $outid2lolabs->[$routid];
+	    foreach $lolab (grep {!exists($usedlolabs{$_})} (defined($lolabids) ? @$lolabids : qw())) {
+	      $rfst->add_arc($r,$qto, $lolab, $routid+1, 0);
+	      $usedlolabs{$lolab}=undef;
 	    }
-	  : qw())
-       } keys(%{$q2rulpos->[$q]})
-      );
-
-    $outF->[$q] = [map { @{$lts->{rules}[$_->{rulid}]{out}} } @qrps];
-
-    ##-- get input (target) for q
-    @qin = map { @{$lts->{rules}[$_->{rulid}]{in}} } @qrps;
-
-    ##-- failure arcs: $q --eps:$out_qc--> $q2 --$c:eps--> $goto->[$q2]{$c}=$goto_qc
-    foreach $c (grep { !exists($deltaq->{$_}) } @chars) {
-      $q2 = $fail->[$q];
-      ##-- follow fail-paths for all completed inputs of $q
-      foreach $cin (@qin[1..$#qin]) {
-	$q2 = $fail->[$q2] while (!defined($goto_qc=$goto->[$q2]{$cin}));
-	$q2 = $goto_qc;
-      }
-      ##-- follow failure path for completed input path
-      $q2 = $fail->[$q2] while (!defined($goto_qc=$goto->[$q2]{$c}));
-
-      ##-- get allowable configurations @rps_qc for $q --$c:???--> $q2
-      @rps_qc = qw();
-    RP1:
-      foreach $rp1 (@qrps) {
-	($begin1,$end1,$rulid1) = @$rp1{qw(begin end rulid)};
-	foreach $rp2 (keys(%{$q2rulpos->[$goto_qc]})) {
-	  ($lenL2,$lenLI2,$lenLIR2,$nread2,$rulid2) = unpack('S4L', $rp2);
-	  next if ($nread2 < $lenLIR2); ##-- ignore incompletely read rules in fail sink state (?)
-	  ($begin2,$end2) = ($lenL2-$nread2, $lenLI2-$nread2);
-
-	  if ($begin1==$begin2 && $end1==$end2) {
-	    ##-- identical match: prefer best rulid
-	    next RP1 if ($rulid2 < $rulid1);
 	  }
-	  elsif ($begin1 < $begin2 && $end1 > $begin2) {
-	    ##-- overlap: rule1 << rule2
-	    warn("\n",
-		 ref($lts), "::gfsmTransducer(): Error: nonsensical overlap for q=$q, c=$c, qto=$goto_qc: ",
-		 "\n  > r1={$begin1..$end1} ~ $rulid1 : ", rule2str($lts->{rules}[$rulid1]),
-		 "\n  > r2={$begin2..$end2} ~ $rulid2 : ", rule2str($lts->{rules}[$rulid2]),
-		 "\n  > ")
-	  }
-	  elsif ($begin2 < $begin1 && $end2 > $begin1) {
-	    ##-- overlap: rule2 << rule1
-	    next RP1;
-	  }
+	} else {
+	  ##-- HACK
+	  $rfst->add_arc($r,$qto, 1,1, 0);
 	}
-	push(@rps_qc, $rp1);
       }
-
-      ##-- get contiguous output for allowable configurations
-      @out_qc = map {
-	@{$lts->{rules}[$_->{rulid}]{out}}
-      } sort { $a->{begin} <=> $b->{begin} } @rps_qc;
-
-      ##-- mark output arc
-      $deltaq->{$c} = join(' ',$goto_qc,@out_qc);
     }
   }
+  print STDERR ("done.\n") if ($args{verbose});
 
-  print STDERR ("done.\n",
-		ref($lts), "::gfsmTransducer(): constructing FST... ")
-    if ($args{verbose});
+  ##-------------------------
+  ## Ouput filter
 
-  ##-- Phase 4: FST construction
-  my $fst = Gfsm::Automaton->new();
-  $fst->is_transducer(1);
-  $fst->is_weighted(0);
-  $fst->root($fst->ensure_state(0));
+  print STDERR (ref($lts), "::gfsmTransducer(): building output filter... ") if ($args{verbose});
 
-  ##-- add designated EOS state
-  my ($qeos,$qmax,$eoslab);
-  $qeos = $acpm->{nq};
-  $qmax = $qeos+1;
-  $fst->add_state($qeos);
-  $fst->is_final($qeos,1);
+  ##-- output filter: labels
+  my $folabs = Gfsm::Alphabet->new;
+  $folabs->insert('<eps>',0);
+  $folabs->insert($_) foreach (sort(keys(%{$lts->{phones}})));
 
-  ##-- add all states, arcs
-  my ($delta_qc, $i, $clab);
+  ##-- output filter: fst
+  my $filter = Gfsm::Automaton->new;
+  $filter->is_transducer(1);
+  $filter->is_weighted(0);
+  $filter->root(0);
+  $filter->is_final(0,1);
+  $filter->add_arc(0,0, 1,0, 0);
+  my @consume = (0,0);
+  my ($rul,$rulid,$inlen,$rulout,$qfrom,$clen,$colab,$i);
+  $qmax = 1;
+  foreach $rul (@{$lts->{rules}}) {
+    $rulid = $rul->{id};
+    $inlen = @{$rul->{in}};
+
+    ##-- get consume path: ( $consume[$inlen] -- (AnyRule:<eps>)^${inlen} --> 0 )
+    if (!defined($consume[$inlen])) {
+      ##-- add consume states from $#consume..$inlen
+      foreach $clen (grep { !defined($consume[$_]) } (1..$inlen)) {
+	$qfrom = $consume[$clen] = $qmax++;
+	$qto   = $consume[$clen-1];
+
+	##-- add an arc from consume($n) to consume($n-1) for each output rule
+	foreach $colab (1..($#{$lts->{rules}}+2)) {
+	  $filter->add_arc($qfrom, $qto, $colab,0, 0);
+	}
+      }
+    }
+
+    ##-- build output path (0 -- $rulid+2 : OUT($rul) --> $consume[$inlen])
+    $rulout = $rul->{out};
+    $filter->add_arc(0,        ($#$rulout <= 0 ? $consume[$inlen]                 : ($qmax++)),
+		     $rulid+2, ($#$rulout >= 0 ? $folabs->get_label($rulout->[0]) : 0),
+		     0);
+    foreach $i (1..$#$rulout) {
+      $filter->add_arc($qmax-1, ($i==$#$rulout ? $consume[$inlen] : ($qmax++)),
+		       0,       $folabs->get_label($rulout->[$i]),
+		       0);
+    }
+  }
+  print STDERR ("done.\n") if ($args{verbose});
+
+  return ($lfst,$rfst,$filter,$lilabs,$folabs); ##-- DEBUG
+
+  ##-------------------------
+  ## Compose: LHS ° RHS
+  print STDERR (ref($lts), "::gfsmTransducer(): composing transducers... ") if ($args{verbose});
+  $lfst->arcsort(Gfsm::ASMUpper());
+  $rfst->_reverse;
+  $rfst->arcsort(Gfsm::ASMLower());
+
+  my $cfst = $lfst->compose($rfst);
+  $cfst->arcsort(Gfsm::ASMUpper());
+  $cfst->_compose($filter);
+  $cfst->_connect;
+  $cfst->renumber_states;
+
+  print STDERR "done.\n" if ($args{verbose});
+
+  @$lts{qw(fst fstilabs fstolabs)} = ($cfst,$lilabs,$folabs);
+
+  return wantarray ? ($cfst,$lilabs,$folabs) : $cfst;
+}
+
+##--------------------------------------------------------------
+## Methods: index generation: Gfsm: partial Trie
+
+## $acpm = subTrie($lts,%args)
+## + %args:
+##    reversed=>$bool,
+##    which=>\@rule_keys,
+##    rules=>\@rules,   ##-- default: $lts->{rulex}
+*subtrie = \&subTrie;
+sub subTrie {
+  my ($lts,%args) = @_;
+
+  my $trie = Lingua::LTS::Trie->new();
+  @{$trie->{chars}}{ (
+		      keys(%{$lts->{letters}}),
+		      keys(%{$lts->{specials}})
+		     )
+		   } = undef;
+
+  my $rules = (defined($args{rules}) ? $args{rules} : $lts->{rulex});
+  my ($q,$r,@rsyms);
+  foreach $r (@$rules) {
+    @rsyms = map { @$_ } @$r{@{$args{which}}};
+    if (defined($q=$trie->a2q(\@rsyms))) {
+      $trie->{out}{$q}{$r->{id}}=undef;
+    } else {
+      $trie->addArray(\@rsyms,{$r->{id}=>undef});
+    }
+  }
+  return $trie;
+}
+
+
+##--------------------------------------------------------------
+## Methods: index generation: Gfsm: partial ACPM
+
+## $acpm = subACPM($lts,%args)
+## + %args:
+##    reversed=>$bool,
+##    which=>\@rule_keys,
+##    rules=>\@rules,   ##-- default: $lts->{rulex}
+##    complete=>$bool,  ##-- defulat: true
+*subacpm = \&subACPM;
+sub subACPM {
+  my ($lts,%args) = @_;
+  my $trie = $lts->subTrie(%args);
+  my $acpm = Lingua::LTS::ACPM->newFromTrie($trie,
+					    joinout=>\&_acpm_joinout
+					   );
+
+  ##-- pack output function
+  my ($q);
   foreach $q (0..($acpm->{nq}-1)) {
-    ##-- add eos arcs: $q --eps:$outF[$q]--> $qeos
-    #if (!$lts->{implicit_eos}) {
-      @out_qc = @{$outF->[$q]};
-      $fst->add_arc($q, ($#out_qc <= 0 ? $qeos                         : ($qmax++)),
-		    0,  ($#out_qc >= 0 ? $olabs->get_label($out_qc[0]) : 0),
-		    0);
-      foreach $i (1..$#out_qc) {
-	$fst->add_arc($qmax-1, ($i==$#out_qc ? $qeos : ($qmax++)),
-		      0,       $olabs->get_label($out_qc[$i]),
-		      0);
-      }
-    #}
-
-    ##-- add arcs $q --$c:$out_qa--> $q2
-    $deltaq = $delta->[$q];
-    while (($c,$delta_qc)=each(%$deltaq)) {
-      ($qto,@out_qc) = split(/ /, $delta_qc);
-      $clab = $ilabs->get_label($c);
-
-      ##-- handle usual arcs
-      $fst->add_arc($q,    ($#out_qc <= 0 ? $qto                          : ($qmax++)),
-		    $clab, ($#out_qc >= 0 ? $olabs->get_label($out_qc[0]) : 0),
-		    0);
-      foreach $i (1..$#out_qc) {
-	$fst->add_arc($qmax-1, ($i==$#out_qc ? $qto : ($qmax++)),
-		      0,       $olabs->get_label($out_qc[$i]),
-		      0);
-      }
-    }
+    $acpm->{out}{$q} = pack('S*',
+			    (defined($acpm->{out}{$q})
+			     ? (map { $_+1 } sort { $a <=> $b } keys(%{$acpm->{out}{$q}}))
+			     : qw()));
   }
 
-  print STDERR "done.\n"
-    if ($args{verbose});
-
-  $fst->arcsort(Gfsm::ASMLower()) if ($args{dosort} || !exists($args{dosort}));
-  return $fst;
+  $acpm->complete() if ($args{complete} || !defined($args{complete}));
+  return $acpm;
 }
 
 

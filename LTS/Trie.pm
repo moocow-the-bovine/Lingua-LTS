@@ -72,11 +72,36 @@ sub add {
   return $q;
 }
 
+## $qid = $trie->addArray(\@syms,$val)
+sub addArray {
+  my ($trie,$ary,$val) = @_;
+  my ($i,$q,$a,$qnext);
+  for ($q=0,$i=0; $i <= $#$ary; $q=$qnext, $i++) {
+    $a = $ary->[$i];
+    if (!defined($qnext=$trie->{goto}[$q]{$a})) {
+      $qnext = $trie->{goto}[$q]{$a} = $trie->{nq}++;
+      $trie->{rgoto}[$qnext] = $q.' '.$a;
+      $trie->{chars}{$a} = undef;
+    }
+  }
+  $trie->{out}{$q} = $val;
+  return $q;
+}
+
+
 ## undef = $trie->remove($str)
 ##  + hack: just removes output for $str
 sub remove {
   my ($trie,$str) = @_;
   my $q = $trie->s2q($str);
+  delete($trie->{out}{$q}) if (defined($q));
+}
+
+## undef = $trie->remove(\@syms)
+##  + hack: just removes output for @syms
+sub removeArray {
+  my ($trie,$ary) = @_;
+  my $q = $trie->a2q($ary);
   delete($trie->{out}{$q}) if (defined($q));
 }
 
@@ -94,6 +119,16 @@ sub s2q {
   return $q;
 }
 
+## $q = $trie->a2q(\@ary)
+sub a2q {
+  my ($trie,$ary) = @_;
+  my ($q,$i);
+  for ($q=0,$i=0; defined($q) && $i <= $#$ary; $i++) {
+    $q = $trie->{goto}[$q]{$ary->[$i]};
+  }
+  return $q;
+}
+
 ## $str = $trie->q2s($q);
 sub q2s {
   my ($trie,$q) = @_;
@@ -104,6 +139,18 @@ sub q2s {
     push(@syms, $a);
   }
   return join('',reverse(@syms));
+}
+
+## \@syms = $trie->q2a($q);
+sub q2a {
+  my ($trie,$q) = @_;
+  my @syms = qw();
+  my ($qa,$a);
+  while (defined($q) && $q > 0 && defined($qa=$trie->{rgoto}[$q])) {
+    ($q,$a) = split(/ /, $qa, 2);
+    push(@syms, $a);
+  }
+  return [reverse(@syms)];
 }
 
 ## \@states = $trie->s2path($str)
@@ -118,11 +165,27 @@ sub s2path {
   return \@path;
 }
 
+## \@states = $trie->a2path(\@syms)
+sub a2path {
+  my ($trie,$ary) = @_;
+  my ($i,$q,@path);
+  for ($q=0,$i=0; defined($q) && $i <= $#$ary; $i++) {
+    push(@path,$q);
+    $q = $trie->{goto}[$q]{$ary->[$i]};
+  }
+  push(@path,$q) if (defined($q));
+  return \@path;
+}
+
+
 ## $out = $trie->q2out($q)
 sub q2out { return defined($_[1]) ? $_[0]{out}{$_[1]} : undef; }
 
 ## $out = $trie->s2out($str)
 sub s2out { return $_[0]->q2out($_[0]->s2q($_[1])); }
+
+## $out = $trie->a2out(\@syms)
+sub a2out { return $_[0]->q2out($_[0]->a2q($_[1])); }
 
 ## ($q,$len) = $trie->s2prefixQ($str)
 ## $q        = $trie->s2prefixQ($str)
@@ -135,11 +198,29 @@ sub s2prefixQ {
   return wantarray ? ($q,$i) : $q;
 }
 
+## ($q,$len) = $trie->a2prefixQ(\@syms)
+## $q        = $trie->a2prefixQ(\@syms)
+sub a2prefixQ {
+  my ($trie,$ary) = @_;
+  my ($q,$i,$qnext);
+  for ($q=0,$i=0; $i <= $#$ary; $q=$qnext,$i++) {
+    last if (!defined($qnext = $trie->{goto}[$q]{$ary->[$i]}));
+  }
+  return wantarray ? ($q,$i) : $q;
+}
+
 ## $prefix = $trie->s2prefix($str)
 sub s2prefix {
   my ($trie,$str) = @_;
   my ($q,$i) = $trie->s2prefixQ($str);
   return substr($str,0,$i);
+}
+
+## $prefix = $trie->a2prefix(\@syms)
+sub a2prefix {
+  my ($trie,$ary) = @_;
+  my ($q,$i) = $trie->a2prefixQ($ary);
+  return @$ary[0..($i-1)];
 }
 
 ##==============================================================================
