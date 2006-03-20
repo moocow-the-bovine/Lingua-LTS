@@ -29,6 +29,7 @@ sub test1 {
 ## Test set: from LTS file
 sub testlts {
   my $ltsfile = shift;
+  print STDERR "testlts($ltsfile)... ";
   our $lts = Lingua::LTS->new;
   $lts->load($ltsfile);
   $lts->expand_alphabet;
@@ -37,11 +38,13 @@ sub testlts {
   @phones  = sort keys %{$lts->{phones}};
   @rules   = @{$lts->{rules}};
   @rulestrs = map { rule2str($_) } @rules;
+  print STDERR "done.\n";
 }
 
 ##-- expanded
 sub testltsx {
   my $ltsfile = shift;
+  print STDERR "testltsx($ltsfile)... ";
   our $lts = Lingua::LTS->new;
   $lts->load($ltsfile);
   $lts->expand_alphabet;
@@ -51,11 +54,13 @@ sub testltsx {
   @phones  = sort keys %{$lts->{phones}};
   @rules   = @{$lts->{rulex}};
   $rules[$_]{id}=$_ foreach (0..$#rules);
+  print STDERR "done.\n";
 }
 
 ##-- expanded
 sub testltsxb {
   my $ltsfile = shift;
+  print STDERR "testltsxb($ltsfile)... ";
   our $lts = Lingua::LTS->new;
   $lts->load($ltsfile);
   $lts->expand_alphabet;
@@ -65,6 +70,7 @@ sub testltsxb {
   @phones  = sort keys %{$lts->{phones}};
   @rules   = @{$lts->{rulex}};
   #$rules[$_]{id}=$_ foreach (0..$#rules);
+  print STDERR "done.\n";
 }
 
 ##--------------------------------------------------------------
@@ -839,17 +845,29 @@ sub lts2fst_2e {
   ## LHS
 
   ##-- LHS: build left-context ACPM
+  vmsg("gen(ltrie)... ");
+  our $ltrie = subtrie($lts, which=>[qw(lhs)], rules=>$lts->{rules}, %args);
+  vmsg0("done.\n");
+
   vmsg("gen(lacpm)... ");
-  our ($ltrie,$lacpm) = crules2acpm($lts,
-				    which=>[qw(lhs)],
-				    minimize=>1, packout=>1, packadd=>0,
-				    debug=>$debug);
-  our $ltrie0 = $trie0 if ($debug);
+  our $lacpm  = Lingua::LTS::ACPM->newFromTrie($ltrie,joinout=>\&Lingua::LTS::_acpm_joinout);
+  our $lacpm0 = $lacpm->clone() if ($debug);  ##-- DEBUG: $lacpm0 : initial
   vmsg0("done.\n");
 
   vmsg("complete(lacpm)... ");
-  our $lacpm0 = $lacpm->clone() if ($debug);
   $lacpm->complete();
+  our $lacpm_c = $lacpm->clone() if ($debug); ##-- DEBUG: $lacpm_c : completed
+  vmsg0("done.\n");
+
+  vmsg("expand(lacpm)... ");
+  #$lacpm = expandACPM($lacpm,$lts->{classes},joinout=>\&Lingua::LTS::_acpm_joinout,%args);
+  $lacpm->expand($lts->{classes}, packas=>'S', joinout=>\&Lingua::LTS::_acpm_joinout);
+  our $lacpm_x = $lacpm->clone() if ($debug); ##-- DEBUG: $lacpm_x : completed, expanded
+  vmsg0("done.\n");
+
+  vmsg("packout(lacpm)... ");
+  packout($lacpm, packadd=>0);
+  our $lacpm_p = $lacpm->clone() if ($debug); ##-- DEBUG: $lacpm_p : completed, expanded, packed
   vmsg0("done.\n");
 
   ##-- debug
@@ -907,21 +925,33 @@ sub lts2fst_2e {
   ## IN+RHS
 
   ##-- IN+RHS: build in+right-context ACPM
+  vmsg("gen(rtrie)... ");
+  our $rtrie = subtrie($lts, which=>[qw(in rhs)], reversed=>1, rules=>$lts->{rules}, %args);
+  vmsg0("done.\n");
+
   vmsg("gen(racpm)... ");
-  our ($rtrie,$racpm) =
-    crules2acpm($lts,
-		which=>[qw(in rhs)], reversed=>1,
-		minimize=>1, packout=>1, packadd=>0,
-		debug=>$debug);
-  our $rtrie0 = $trie0->clone() if ($debug);
+  our $racpm  = Lingua::LTS::ACPM->newFromTrie($rtrie,joinout=>\&Lingua::LTS::_acpm_joinout);
+  our $racpm0 = $racpm->clone() if ($debug);  ##-- DEBUG: $racpm0 : initial
   vmsg0("done.\n");
 
   vmsg("complete(racpm)... ");
-  our $racpm0 = $racpm->clone() if ($debug);
   $racpm->complete();
+  our $racpm_c = $racpm->clone() if ($debug); ##-- DEBUG: $racpm_c : completed
+  vmsg0("done.\n");
+
+  vmsg("expand(racpm)... ");
+  #$racpm = expandACPM($racpm,$lts->{classes},joinout=>\&Lingua::LTS::_acpm_joinout,%args);
+  $racpm->expand($lts->{classes}, packas=>'S', joinout=>\&Lingua::LTS::_acpm_joinout);
+  our $racpm_x = $racpm->clone() if ($debug); ##-- DEBUG: $racpm_x : completed, expanded
+  vmsg0("done.\n");
+
+  vmsg("packout(racpm)... ");
+  packout($racpm, packadd=>0);
+  our $racpm_p = $racpm->clone() if ($debug); ##-- DEBUG: $racpm_p : completed, expanded, packed
   vmsg0("done.\n");
 
   if ($debug) {
+    ##-- DEBUG
     vmsg("debug(racpm)... ");
     our $xracpm =
       rulex2acpm($lts,which=>[qw(in rhs)], reversed=>1, expand=>0, packout=>1, debug=>$debug);
@@ -969,6 +999,7 @@ sub lts2fst_2e {
   $rfst->is_transducer(1);
   $rfst->is_weighted(0);
   $rfst->root(0);
+  my %warnedabout = qw();
   my ($sharedlab_matches,%used_shared_labs);
   foreach $q (0..($racpm->{nq}-1)) {
     $gotoq = $racpm->{goto}[$q];
@@ -994,7 +1025,10 @@ sub lts2fst_2e {
 	}
       } else {
 	##-- no output defined for state: add a '<norule>' transition (and warn)
-	warn("no output defined for RACPM state q$qto -- using <norule>!\n");
+	warn("no output defined for RACPM state q$qto -- using <norule>!\n")
+	  if (!exists($warnedabout{$qto}));
+	$warnedabout{$qto} = undef;
+
 	$rfst->add_arc($q,$qto, 1,$rullabs->get_label('<norule>'), 0);
 	if ($debug) {
 	  $rullabs_d->insert('<norule>');
@@ -1065,7 +1099,7 @@ sub lts2fst_2e {
 
   vmsg("arcsort()...");
   $lfst->arcsort(Gfsm::ASMUpper);
-  $rfst->arcsort(Gfsm::ASMLower);
+  $rrfst->arcsort(Gfsm::ASMLower);
   $filter->arcsort(Gfsm::ASMUpper);
   vmsg0("done.\n");
 
@@ -1074,8 +1108,10 @@ sub lts2fst_2e {
   vmsg0("done.\n");
 
   vmsg("cfst: connect, renumber, sort...");
-  $cfst->_connect;
-  $cfst->renumber_states;
+  ##-- TODO
+  #$cfst->_connect;
+  #$cfst->renumber_states;
+  ##--/TODO
   $cfst->arcsort(Gfsm::ASMUpper);
   vmsg0("done.\n");
 
@@ -1084,8 +1120,10 @@ sub lts2fst_2e {
   vmsg0("done.\n");
 
   vmsg("fcfst: connect, renumber, sort...");
-  $fcfst->_connect;
-  $fcfst->renumber_states;
+  ##-- TODO
+  #$fcfst->_connect;
+  #$fcfst->renumber_states;
+  ##-- /TODO
   $fcfst->arcsort(Gfsm::ASMLower);
   vmsg0("done.\n");
 
@@ -1128,12 +1166,28 @@ sub lts2fst_2e {
     our $phones   = join(' ', @{$folabs->asArray}[@$phonlabs]);
   }
 }
-testltstest2xb();
-lts2fst_2e(debug=>1);
+#testltstest2xb();
+#lts2fst_2e(debug=>1);
 ##--
 #testims2xb;
 #lts2fst_2e(debug=>1);
 #exit(0);
+
+##--------------------------------------------------------------
+## Test: 2f
+sub lts2fst_2f {
+  my %args = @_;
+  our ($fst,$ilabs,$olabs) = $lts->gfsmTransducer(%args);
+
+  ##-- DEBUG
+  fstlkp('#unterschied#', $fst,lower=>$ilabs,upper=>$olabs);
+}
+#testltstest2xb();
+#lts2fst_2f();
+##--
+testims2xb;
+lts2fst_2f();
+exit(0);
 
 ##--------------------------------------------------------------
 ## Test: flex
@@ -1233,7 +1287,8 @@ sub out2str_packed_lts_debug {
 }
 
 
-##-- utility: rules2acpm($lts,%args)
+## $acpm         = rules2acpm($lts,%args); ##-- scalar context
+## ($trie,$acpm) = rules2acpm($lts,%args); ##-- list context
 ## + %args:
 ##    rules=>\@rules,
 ##    reversed=>$bool,
@@ -1241,10 +1296,12 @@ sub out2str_packed_lts_debug {
 ##    packout=>$bool,     ##-- whether to pack output function
 ##    packadd=>$int,
 ##    complete=>$bool,
-##    expand=>$bool,
+##    expandTrie=>$bool,   ##-- BUGGY if true
+##    minimizeTrie=>$bool, ##-- BUGGY if true
+##    debug=>$bool;
 sub crules2acpm {
   my $lts=shift;
-  return rules2acpm($lts,rules=>$lts->{rulex},expand=>0,minimize=>1,@_);
+  return rules2acpm($lts,rules=>$lts->{rulex},expandTrie=>0,minimizeTrie=>1,@_);
 }
 sub rulex2acpm {
   my $lts=shift;
@@ -1252,8 +1309,70 @@ sub rulex2acpm {
 }
 sub rules2acpm {
   my ($lts,%args) = @_;
+
+  vmsg0("subtrie(), ");
+  my $trie = subtrie($lts,%args);
+
+  if ($args{expandTrie}) {
+    vmsg0("expandTrie(), ");
+    our $trie0 = $trie->clone() if ($args{debug});
+    $trie = expandTrie($lts,$trie, joinout=>\&Lingua::LTS::_acpm_joinout, %args);
+    @{$trie->{chars}}{keys(%{$lts->{letters}}),keys(%{$lts->{specials}})} = undef;
+  }
+  elsif ($args{minimizeTrie}) {
+    vmsg0("minimizeTrie(), ");
+    our $trie0 = $trie->clone() if ($args{debug});
+    $trie = minimizeTrie($lts,$trie, joinout=>\&Lingua::LTS::_acpm_joinout, %args);
+    @{$trie->{chars}}{keys(%{$lts->{letters}}),keys(%{$lts->{specials}})} = undef;
+  }
+
+  vmsg0("ACPM->newFromTrie(), ");
+  my $acpm = Lingua::LTS::ACPM->newFromTrie($trie,
+					    joinout=>\&Lingua::LTS::_acpm_joinout
+					   );
+
+  vmsg0("packout(), ");
+  packout($acpm,%args) if ($args{packout});
+
+
+  vmsg0("complete(), ");
+  $acpm->complete() if ($args{complete});
+
+  return wantarray ? ($trie,$acpm) : $acpm;
+}
+
+##--------------------------------------------------------------
+## Convert output id-hashes to packed sorted id-lists
+
+## $trie_or_acpm = packout($trie_or_acpm,%args)
+##  + %args: packadd=>$add_to_rulid,  ##-- default: 0
+sub packout {
+  my ($acpm,%args) = @_;
+  my $packadd = $args{packadd} ? $args{packadd} : 0;
+  my ($q);
+  foreach $q (0..($acpm->{nq}-1)) {
+    $acpm->{out}{$q} = pack('S*',
+			    (defined($acpm->{out}{$q})
+			     ? (map { $_+$packadd }
+				sort { $a <=> $b }
+				keys(%{$acpm->{out}{$q}}))
+			     : qw()));
+  }
+  return $acpm;
+}
+
+##--------------------------------------------------------------
+## Subordinate Trie
+
+## $trie = subtrie($lts,%args)
+##  + %args:
+##    rules=>\@rules,        ##-- default $lts->{rulex}
+##    which=>\@rule_keys,
+##    reversed=>$bool,
+sub subtrie {
+  my ($lts,%args) = @_;
+
   our $trie = Lingua::LTS::Trie->new();
-  #@{$trie->{chars}}{keys(%{$lts->{letters}})} = undef; ##-- DEBUG
   @{$trie->{chars}}{keys(%{$lts->{letters}}),keys(%{$lts->{specials}})} = undef;
 
   my $rules = $args{rules} ? $args{rules} : $lts->{rulex};
@@ -1267,41 +1386,147 @@ sub rules2acpm {
       $trie->addArray(\@rsyms,{$r->{id}=>undef});
     }
   }
-  if ($args{expand}) {
-    our $trie0 = $trie->clone() if ($args{debug});
-    $trie = expandTrie($lts,$trie, joinout=>\&Lingua::LTS::_acpm_joinout, %args);
-    @{$trie->{chars}}{keys(%{$lts->{letters}}),keys(%{$lts->{specials}})} = undef;
-  }
-  elsif ($args{minimize}) {
-    our $trie0 = $trie->clone() if ($args{debug});
-    $trie = minimizeTrie($lts,$trie, joinout=>\&Lingua::LTS::_acpm_joinout, %args);
-    @{$trie->{chars}}{keys(%{$lts->{letters}}),keys(%{$lts->{specials}})} = undef;
-  }
 
-  my $acpm = Lingua::LTS::ACPM->newFromTrie($trie,
-					    joinout=>\&Lingua::LTS::_acpm_joinout
-					   );
-
-  ##-- pack output function
-  if ($args{packout}) {
-    my $packadd = $args{packadd} ? $args{packadd} : 0;
-    #$acpm->{outh} = { %{$acpm->{out}} }; ##-- save hashed output function
-    foreach $q (0..($acpm->{nq}-1)) {
-      $acpm->{out}{$q} = pack('S*',
-			      (defined($acpm->{out}{$q})
-			       ? (map { $_+$packadd }
-				  sort { $a <=> $b }
-				  keys(%{$acpm->{out}{$q}}))
-			       : qw()));
-    }
-  }
-
-  $acpm->complete() if ($args{complete});
-  return wantarray && ($args{expand} || $args{minimize}) ? ($trie,$acpm) : $acpm;
+  return $trie;
 }
 
 ##--------------------------------------------------------------
-## Minimization
+## Expansion: ACPM
+
+## $expanded_acpm = expandACPM($acpm,\%class2char2undef, %args)
+## + requires:
+##    $acpm->complete()
+## + %args:
+##    joinout => \&sub,
+##    debug   => $bool,
+sub expandACPM {
+  my ($acpm,$classes,%args) = @_;
+  my $debug = $args{debug};
+
+  ##-- DEBUG
+  if ($debug) {
+    our $qlabs   = $acpm->gfsmStateLabels(undef,out2str=>\&out2str_ruleids);
+    our $qlabs_p = $acpm->gfsmStateLabels(undef,out2str=>undef);
+    our $ilabs   = $acpm->gfsmInputLabels();
+  }
+
+  ##-- Phase 1: Generate NFA by expanding $classes
+  my $goto    = $acpm->{goto};
+  my $out     = $acpm->{out};
+  my $joinout = $args{joinout};
+  my $nfa     = Gfsm::Automaton->new;
+  $nfa->is_deterministic(0);
+  $nfa->is_transducer(0);
+  $nfa->is_weighted(0);
+  $nfa->sort_mode(Gfsm::ASMNone);
+  $nfa->root(0);
+
+  my ($q,$c,$cc,$clab,$qto);
+  my $labs = Gfsm::Alphabet->new;
+  $labs->insert('<eps>',0);
+  foreach $q (0..($acpm->{nq}-1)) {
+    $nfa->is_final($q,1) if (exists($out->{$q}));
+    while (($c,$qto)=each(%{$goto->[$q]})) {
+      if (exists($classes->{$c})) {
+	##-- expand class
+	foreach $cc (keys(%{$classes->{$c}})) {
+	  $clab = $labs->get_label($cc);
+	  $nfa->add_arc($q,$qto, $clab,$clab, 0);
+	}
+      }
+      else {
+	##-- literal arc
+	$clab = $labs->get_label($c);
+	$nfa->add_arc($q,$qto, $clab,$clab, 0);
+      }
+    }
+  }
+
+  ##-- Phase 2: Determinize NFA (native perl)
+  my $laba   = $labs->asArray;
+  my $q0     = packids({0=>undef});
+  my $id2set = [$q0];
+  my $set2id = {$q0=>0};
+  my $dgoto  = [];
+  my $drgoto = [];
+  my $dout   = {};
+  my $ai     = Gfsm::ArcIter->new();
+
+  my ($dq,@nqs,$nq,$nqh,$dqtop,$dqto, %c2nq);
+  my @fifo = (0);
+  while (defined($dq=shift(@fifo))) {
+    @nqs = unpack('S*', $id2set->[$dq]);
+
+    ##-- join output
+    if (defined($joinout)) {
+      foreach $nq (@nqs) {
+	$dout->{$dq} = $joinout->($dout->{$dq}, $out->{$nq});
+      }
+    }
+
+    ##-- get NFA transition map
+    %c2nq = qw();
+    foreach $nq (@nqs) {
+      for ($ai->open($nfa,$nq); $ai->ok; $ai->next) {
+	$c2nq{$laba->[$ai->lower]}{$ai->target} = undef;
+      }
+    }
+
+    ##-- instantiate output states
+    while (($c,$nqh)=each(%c2nq)) {
+      if (!defined($dqto=$set2id->{$dqtop=packids($nqh)})) {
+	$dqto = $set2id->{$dqtop} = scalar(@$id2set);
+	push(@$id2set, $dqtop);
+	push(@fifo,    $dqto);
+      }
+      $dgoto->[$dq]{$c} = $dqto;
+      $drgoto->[$dqto]  = "-1 $c"; ##-- HACK: rgoto is buggy in determinized ACPM
+    }
+  }
+
+  ##-- Phase 3: manually construct a new ACPM from the DFA
+  my $dacpm = Lingua::LTS::ACPM->new(
+				     %$acpm,
+				     goto=>$dgoto,
+				     rgoto=>$drgoto,
+				     out=>$dout,
+				     fail=>[],
+				     chars=>{
+					     map {$_=>undef} (@$laba[1..$#$laba],
+							      grep { !exists($classes->{$_}) }
+							      keys(%{$acpm->{chars}}))
+					    },
+				     nq=>scalar(@$id2set),
+				     ##-- new
+				     id2set=>$id2set,
+				     set2id=>$set2id,
+				    );
+  ##-- DEBUG
+  if ($debug) {
+    our $set2id_d = { map { ('{'.join(',',unpack('S*',$_)).'}')=>$set2id->{$_} } keys(%$set2id) };
+    our $id2set_d = [ map { ('{'.join(',',unpack('S*',$_)).'}')                }     (@$id2set) ];
+
+    our $qlabs_dacpm = Gfsm::Alphabet->new();
+    $qlabs_dacpm->insert("q$_~$id2set_d->[$_]".out2str_lts_ruleids($dout->{$_}))
+      foreach (0..($dacpm->{nq}-1));
+
+    our $qlabs_dacpm_short = Gfsm::Alphabet->new();
+    $qlabs_dacpm_short->insert("q$_~$id2set_d->[$_]".out2str_ruleids_short($dout->{$_}))
+      foreach (0..($dacpm->{nq}-1));
+
+    #viewfsm($nfa,lower=>$labs,states=>$qlabs,title=>'NFA',bg=>1);
+    #$acpm->viewps(out2str=>\&out2str_lts_ruleids,title=>'ACPM (-expand)',bg=>1);
+
+    #$dacpm->viewps(ilabels=>$labs,states=>$qlabs_dtrie,title=>'ACPM (+expand)',bg=>1);
+
+    print "--DEBUG is ON--\n";
+  }
+
+  return $dacpm;
+}
+
+##--------------------------------------------------------------
+## Minimization (BUGGY)
 
 sub minimizeTrie {
   my ($lts,$trie,%args) = @_;
@@ -1440,10 +1665,11 @@ sub trie2suffixes {
 
 
 ##--------------------------------------------------------------
-## Expansion
+## Expansion: Trie
+
+## --> BUGGY
 
 ##-- $expandedTrie = expandTrie($lts,$trie,%args)
-## --> BUGGY
 ## + expand class-arcs in $trie
 ## + %args:
 ##    joinout=>\&sub,
@@ -1586,25 +1812,37 @@ sub out2str_ruleids_short {
 ##--------------------------------------------------------------
 ## Test: lookup (FST)
 
-## undef = fstlkp($w)
+## undef = fstlkp($w, $fst,%args)
+##  + %args:
+##      lower=>$ilabs,
+##      upper=>$olabs,
 sub fstlkp {
-  my $w = shift;
+  my ($w,$fst,%args) = @_;
+
   $w = '' if (!defined($w));
-  @phones_lts = $lts->apply_word_indexed($w);
 
-  @wlabs  = grep { defined($_) } @{$iolabs->asHash}{(($lts->{implicit_bos} ? '#' : qw()),
-						     split(//,$w),
-						     ($lts->{implicit_eos} ? '#' : qw()))};
-  $result = $fst->lookup(\@wlabs);
-  $paths  = $result->paths(Gfsm::LSUpper);
+  ##-- FST
+  $fst = $main::fst if (!defined($fst));
+  my $ilabs = $args{lower} ? $args{lower} : $main::iolabs;
+  my $olabs = $args{upper} ? $args{upper} : $main::iolabs;
+  @wlabs  = grep { defined($_) } @{$ilabs->asHash}{(($lts->{implicit_bos} ? '#' : qw()),
+						    split(//,$w),
+						    ($lts->{implicit_eos} ? '#' : qw()))};
+  our $result = $fst->lookup(\@wlabs);
+  our $paths  = $result->paths(Gfsm::LSUpper);
 
-  our (@phones_fst);
+  our @phones_lts = $lts->apply_word($w);
+  our @phones_fst = map { [@{$olabs->asArray}[@{$_->{hi}}]] } @$paths;
   print
     ("w=\"$w\"\n",
      "\tLTS: ", join(' ', '(', @phones_lts, ')'), "\n",
-     (map {
-       ("\tFST: ", join(' ', '(', (@phones_fst=@{$iolabs->asArray}[@{$_->{hi}}]), ')'), "\n")
-     } @$paths),
+     (@phones_fst
+      ? (
+	 map {
+	   ("\tFST: ", join(' ', '(', @{$phones_fst[$_]}, ')'), "\n")
+	 } (0..$#phones_fst)
+	)
+      : "\tFST: -EMPTY-\n"),
     );
 }
 

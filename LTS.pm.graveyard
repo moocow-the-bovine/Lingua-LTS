@@ -700,3 +700,255 @@ sub gfsmTransducer_buggy {
   $fst->arcsort(Gfsm::ASMLower()) if ($args{dosort} || !exists($args{dosort}));
   return $fst;
 }
+
+
+sub gfsmTransducer {
+  my ($lts,%args) = @_;
+
+  ##-------------------------
+  ## LHS
+
+  ##-- LHS: generate ACPM
+  print STDERR (ref($lts), "::gfsmTransducer(): generating left-context ACPM... ") if ($args{verbose});
+  my $lacpm = $lts->subacpm(which=>[qw(lhs)]);
+  print STDERR ("done.\n") if ($args{verbose});
+
+  ##-- LHS: build & adjust lacpm fst
+  print STDERR (ref($lts), "::gfsmTransducer(): building left-context FST... ") if ($args{verbose});
+
+  ##-- LHS: FST: labels
+  my $lilabs   = $lacpm->gfsmInputLabels();
+  my $lilabs_a = $lilabs->asArray();
+  my $lolabs = $lacpm->gfsmOutputLabels();
+  my $nlolabs = $lolabs->size;
+  my @lisyms = grep { $_ ne '<eps>' && $_ ne '<fail>' } @$lilabs_a;
+  $lolabs->insert($_) foreach (@lisyms);
+  my $lolabs_h = $lolabs->asHash;
+  my $lolabs_a = $lolabs->asArray;
+
+  my $lfst = $lacpm->gfsmTransducer(ilabels=>$lilabs,olabels=>$lolabs,dosort=>0);
+  my $qmax = $lfst->n_states();
+  my $ai = Gfsm::ArcIter->new();
+  my ($q,$r);
+  foreach $q (0..($lacpm->{nq}-1)) {
+    ##-- replace arcs ($q --a:OutL($q)--> $qto) with ($q --a:OutL($q)--> $r=newState() --eps:a--> $qto)
+    for ($ai->open($lfst,$q); $ai->ok; $ai->next) {
+      $r = $qmax++;
+      $lfst->add_arc($r,$ai->target, 0,$lolabs_h->{$lilabs_a->[$ai->lower]}, 0);
+      $ai->upper($lolabs_h->{$lacpm->{out}{$q}});
+      $ai->target($r);
+    }
+  }
+  print STDERR ("done.\n") if ($args{verbose});
+
+
+  ##-------------------------
+  ## IN.RHS (reversed)
+
+  ##-- IN.RHS: generate ACPM
+  print STDERR (ref($lts), "::gfsmTransducer(): generating right-context ACPM... ") if ($args{verbose});
+  my $racpm = $lts->subacpm(which=>[qw(in rhs)], reversed=>1);
+  print STDERR ("done.\n") if ($args{verbose});
+
+  ##-- IN.RHS: build & adjust racpm fst
+  print STDERR (ref($lts), "::gfsmTransducer(): building right-context FST... ") if ($args{verbose});
+
+  ##-- IN.RHS: FST: labels
+  my $rilabs   = $lolabs;
+  my $rilabs_a = $rilabs->asArray;
+  my $rilabs_h = $rilabs->asHash;
+
+  my $rolabs   = $racpm->gfsmOutputLabels();
+  my $nrolabs  = $rolabs->size;
+  $rolabs->insert($_) foreach (@{$lolabs->asArray}[1..($nlolabs-1)]);
+  my $rolabs_h = $rolabs->asHash;
+
+  #my $colabs_d = Gfsm::Alphabet->new();
+  #$colabs_d->insert('<eps>',0);
+  #$colabs_d->insert('<none>',1);
+  #$colabs_d->insert(rule2str($lts->{rules}[$_]), $_+2) foreach (0..$#{$lts->{rules}});
+
+  ##-- IN.RHS: map ($packed_rulid == $rulid+1) => \@lolabs_containing_rulid
+  my $outid2lolabs = [[]];
+  my ($loseti,$prulid);
+  foreach $loseti (1..($nlolabs-1)) {
+    foreach $prulid (unpack('S*', $lolabs_a->[$loseti])) {
+      push(@{$outid2lolabs->[$prulid]}, $loseti);
+    }
+  }
+
+  ##-- RHS: build & adjust racpm fst
+  my $rfst = $racpm->gfsmTransducer(ilabels=>$rilabs,olabels=>$rolabs,dosort=>0);
+  $qmax = $rfst->n_states();
+  my (%rdeltaq, $qto, $routid,$lolabids,%usedlolabs,$lolab);
+  foreach $q (0..($racpm->{nq}-1)) {
+    print STDERR "." if ($args{verbose} && $q % 512 == 0);
+
+    ##-- $rdeltaq{$qto} = $r
+    ##  + s.t. $r is a new intermediate state for arcs ($q --a:a--> $qto),
+    ##  + translated to ($q --a:eps--> $r --OutL:OutBest(OutL,$qto)--> $qto)
+    %rdeltaq = qw();
+    for ($ai->open($rfst,$q); $ai->ok; $ai->next) {
+      if (!exists($rdeltaq{$qto=$ai->target})) {
+	$rdeltaq{$qto} = $r = $qmax;
+
+	##-- re-route arcs ($q --a:a--> $qto) ==> ($q --a:eps--> $r)
+	$ai->target($r);
+	$ai->upper(0);
+	$qmax++;
+
+	##-- get best output for each left-context set outL \in out(Q_L), outR($qto)
+	##   + add arcs: ($r --OutL:OutBest(OutL,$qto)--> $qto)
+	if ($racpm->{out}{$qto}) {
+	  %usedlolabs = qw();
+	  foreach $routid (unpack('S*', $racpm->{out}{$qto})) {
+	    $lolabids = $outid2lolabs->[$routid];
+	    foreach $lolab (grep {!exists($usedlolabs{$_})} (defined($lolabids) ? @$lolabids : qw())) {
+	      $rfst->add_arc($r,$qto, $lolab, $routid+1, 0);
+	      $usedlolabs{$lolab}=undef;
+	    }
+	  }
+	} else {
+	  ##-- HACK
+	  $rfst->add_arc($r,$qto, 1,1, 0);
+	}
+      }
+    }
+  }
+  print STDERR ("done.\n") if ($args{verbose});
+
+  ##-------------------------
+  ## Ouput filter
+
+  print STDERR (ref($lts), "::gfsmTransducer(): building output filter... ") if ($args{verbose});
+
+  ##-- output filter: labels
+  my $folabs = Gfsm::Alphabet->new;
+  $folabs->insert('<eps>',0);
+  $folabs->insert($_) foreach (sort(keys(%{$lts->{phones}})));
+
+  ##-- output filter: fst
+  my $filter = Gfsm::Automaton->new;
+  $filter->is_transducer(1);
+  $filter->is_weighted(0);
+  $filter->root(0);
+  $filter->is_final(0,1);
+  $filter->add_arc(0,0, 1,0, 0);
+  my @consume = (0,0);
+  my ($rul,$rulid,$inlen,$rulout,$qfrom,$clen,$colab,$i);
+  $qmax = 1;
+  foreach $rul (@{$lts->{rules}}) {
+    $rulid = $rul->{id};
+    $inlen = @{$rul->{in}};
+
+    ##-- get consume path: ( $consume[$inlen] -- (AnyRule:<eps>)^${inlen} --> 0 )
+    if (!defined($consume[$inlen])) {
+      ##-- add consume states from $#consume..$inlen
+      foreach $clen (grep { !defined($consume[$_]) } (1..$inlen)) {
+	$qfrom = $consume[$clen] = $qmax++;
+	$qto   = $consume[$clen-1];
+
+	##-- add an arc from consume($n) to consume($n-1) for each output rule
+	foreach $colab (1..($#{$lts->{rules}}+2)) {
+	  $filter->add_arc($qfrom, $qto, $colab,0, 0);
+	}
+      }
+    }
+
+    ##-- build output path (0 -- $rulid+2 : OUT($rul) --> $consume[$inlen])
+    $rulout = $rul->{out};
+    $filter->add_arc(0,        ($#$rulout <= 0 ? $consume[$inlen]                 : ($qmax++)),
+		     $rulid+2, ($#$rulout >= 0 ? $folabs->get_label($rulout->[0]) : 0),
+		     0);
+    foreach $i (1..$#$rulout) {
+      $filter->add_arc($qmax-1, ($i==$#$rulout ? $consume[$inlen] : ($qmax++)),
+		       0,       $folabs->get_label($rulout->[$i]),
+		       0);
+    }
+  }
+  print STDERR ("done.\n") if ($args{verbose});
+
+  return ($lfst,$rfst,$filter,$lilabs,$folabs); ##-- DEBUG
+
+  ##-------------------------
+  ## Compose: LHS ° RHS
+  print STDERR (ref($lts), "::gfsmTransducer(): composing transducers... ") if ($args{verbose});
+  $lfst->arcsort(Gfsm::ASMUpper());
+  $rfst->_reverse;
+  $rfst->arcsort(Gfsm::ASMLower());
+
+  my $cfst = $lfst->compose($rfst);
+  $cfst->arcsort(Gfsm::ASMUpper());
+  $cfst->_compose($filter);
+  $cfst->_connect;
+  $cfst->renumber_states;
+
+  print STDERR "done.\n" if ($args{verbose});
+
+  @$lts{qw(fst fstilabs fstolabs)} = ($cfst,$lilabs,$folabs);
+
+  return wantarray ? ($cfst,$lilabs,$folabs) : $cfst;
+}
+
+##--------------------------------------------------------------
+## Methods: index generation: Gfsm: partial Trie
+
+## $acpm = subTrie($lts,%args)
+## + %args:
+##    reversed=>$bool,
+##    which=>\@rule_keys,
+##    rules=>\@rules,   ##-- default: $lts->{rulex}
+*subtrie = \&subTrie;
+sub subTrie {
+  my ($lts,%args) = @_;
+
+  my $trie = Lingua::LTS::Trie->new();
+  @{$trie->{chars}}{ (
+		      keys(%{$lts->{letters}}),
+		      keys(%{$lts->{specials}})
+		     )
+		   } = undef;
+
+  my $rules = (defined($args{rules}) ? $args{rules} : $lts->{rulex});
+  my ($q,$r,@rsyms);
+  foreach $r (@$rules) {
+    @rsyms = map { @$_ } @$r{@{$args{which}}};
+    if (defined($q=$trie->a2q(\@rsyms))) {
+      $trie->{out}{$q}{$r->{id}}=undef;
+    } else {
+      $trie->addArray(\@rsyms,{$r->{id}=>undef});
+    }
+  }
+  return $trie;
+}
+
+
+##--------------------------------------------------------------
+## Methods: index generation: Gfsm: partial ACPM
+
+## $acpm = subACPM($lts,%args)
+## + %args:
+##    reversed=>$bool,
+##    which=>\@rule_keys,
+##    rules=>\@rules,   ##-- default: $lts->{rulex}
+##    complete=>$bool,  ##-- defulat: true
+*subacpm = \&subACPM;
+sub subACPM {
+  my ($lts,%args) = @_;
+  my $trie = $lts->subTrie(%args);
+  my $acpm = Lingua::LTS::ACPM->newFromTrie($trie,
+					    joinout=>\&_acpm_joinout
+					   );
+
+  ##-- pack output function
+  my ($q);
+  foreach $q (0..($acpm->{nq}-1)) {
+    $acpm->{out}{$q} = pack('S*',
+			    (defined($acpm->{out}{$q})
+			     ? (map { $_+1 } sort { $a <=> $b } keys(%{$acpm->{out}{$q}}))
+			     : qw()));
+  }
+
+  $acpm->complete() if ($args{complete} || !defined($args{complete}));
+  return $acpm;
+}

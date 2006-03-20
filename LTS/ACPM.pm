@@ -52,6 +52,7 @@ sub newFromTrie {
 ## Methods: Construction
 ##==============================================================================
 
+##--------------------------------------------------------------
 ## $acpm = $acpm->fromTrie($lingua_lts_trie,%args)
 ##  + %args:
 ##     joinout=>\&sub ##-- $out1_NEW = &sub($out1_old,$out2)
@@ -70,7 +71,7 @@ sub fromTrie {
   return $acpm->compile(%args);
 }
 
-
+##--------------------------------------------------------------
 ## $acpm = $acpm->compile(%args)
 ##  + %args:
 ##     joinout=>\&sub ##-- $out1_NEW = &sub($out1_old,$out2)
@@ -115,7 +116,7 @@ sub compile {
   return $acpm;
 }
 
-
+##--------------------------------------------------------------
 ## $acpm = $acpm->complete(%args)
 ##  + adds $goto links for all $fail arcs
 ##  + %args: (none)
@@ -138,6 +139,109 @@ sub complete {
 
   return $acpm;
 }
+
+##==============================================================================
+## Methods: Class-Expansion
+##==============================================================================
+
+## $acpm = $acpm->expand($acpm, \%classes, %args)
+## + requires:
+##    - $acpm->complete()
+##    - Gfsm
+## + %classes maps ACPM class-symbols to pseudo-sets (keys) of literal symbols
+## + %args:
+##    packas  => $template_char  ##-- either 'S' or 'L': default='L'
+##    joinout => \&sub,          ##-- as for compile()
+sub expand {
+  my ($acpm,$classes,%args) = @_;
+  #require Gfsm;
+
+  ##-- Phase 1: Generate NFA by expanding $classes
+  my $goto    = $acpm->{goto};
+  my $out     = $acpm->{out};
+  my $joinout = $args{joinout};
+  my $nfa     = Gfsm::Automaton->new();
+  $nfa->is_deterministic(0);
+  $nfa->is_transducer(0);
+  $nfa->is_weighted(0);
+  $nfa->sort_mode(Gfsm::ASMNone());
+  $nfa->root(0);
+
+  my ($q,$c,$cc,$clab,$qto);
+  my $labs = Gfsm::Alphabet->new();
+  $labs->insert('<eps>',0);
+  foreach $q (0..($acpm->{nq}-1)) {
+    $nfa->is_final($q,1) if (exists($out->{$q}));
+    while (($c,$qto)=each(%{$goto->[$q]})) {
+      if (exists($classes->{$c})) {
+	##-- expand class
+	foreach $cc (keys(%{$classes->{$c}})) {
+	  $clab = $labs->get_label($cc);
+	  $nfa->add_arc($q,$qto, $clab,$clab, 0);
+	}
+      }
+      else {
+	##-- literal arc
+	$clab = $labs->get_label($c);
+	$nfa->add_arc($q,$qto, $clab,$clab, 0);
+      }
+    }
+  }
+
+  ##-- Phase 2: Determinize NFA (native perl)
+  my $laba   = $labs->asArray;
+  my $packas = ($args{packas} ? $args{packas} : 'L').'*';
+  my $q0     = pack($packas,0);
+  my $id2set = $acpm->{id2set} = [$q0];
+  my $set2id = $acpm->{set2id} = {$q0=>0};
+  my $dgoto  = [];
+  my $drgoto = [];
+  my $dout   = {};
+  my $ai     = Gfsm::ArcIter->new();
+
+  my ($dq,@nqs,$nq,$nqh,$dqtop,$dqto, %c2nq);
+  my @fifo = (0);
+  while (defined($dq=shift(@fifo))) {
+    @nqs = unpack($packas, $id2set->[$dq]);
+
+    ##-- join output
+    if (defined($joinout)) {
+      foreach $nq (@nqs) {
+	$dout->{$dq} = $joinout->($dout->{$dq}, $out->{$nq});
+      }
+    }
+
+    ##-- get NFA transition map
+    %c2nq = qw();
+    foreach $nq (@nqs) {
+      for ($ai->open($nfa,$nq); $ai->ok; $ai->next) {
+	$c2nq{$laba->[$ai->lower]}{$ai->target} = undef;
+      }
+    }
+
+    ##-- instantiate output states
+    while (($c,$nqh)=each(%c2nq)) {
+      if (!defined($dqto=$set2id->{$dqtop=pack($packas, sort {$a<=>$b} keys(%$nqh))})) {
+	$dqto = $set2id->{$dqtop} = scalar(@$id2set);
+	push(@$id2set, $dqtop);
+	push(@fifo,    $dqto);
+      }
+      $dgoto->[$dq]{$c} = $dqto;
+      $drgoto->[$dqto]  = "-1 $c"; ##-- HACK: rgoto is buggy in determinized ACPM
+    }
+  }
+
+  ##-- Phase 3: instantiate the ACPM from the DFA
+  $acpm->{goto}    = $dgoto;
+  $acpm->{rgoto}   = $drgoto;
+  $acpm->{out}     = $dout;
+  $acpm->{nq}      = scalar(@$id2set);
+  @{$acpm->{fail}} = qw();
+  delete(@{$acpm->{chars}}{keys(%$classes)});
+
+  return $acpm;
+}
+
 
 ##==============================================================================
 ## Methods: Lookup
@@ -180,6 +284,7 @@ sub s2path {
 
 ## $str = $acpm->q2s($q);
 #-> INHERITED from Trie
+#-> BAD for expanded ACPM
 
 ## $out = $acpm->q2out($q)
 #-> INHERITED from Trie

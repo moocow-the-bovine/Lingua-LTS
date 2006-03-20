@@ -106,6 +106,31 @@ sub removeArray {
 }
 
 ##==============================================================================
+## Methods: Output packing
+##==============================================================================
+
+## $trie = $trie->packout(%args)
+##  + suitable for tries whose output function is a hash pseudo-set with numeric keys
+##  + %args:
+##     packas => $pack_template_char,  ##-- either 'L' or 'S', default='L'
+##     packadd=> $int,                 ##-- value to add to ids when packing (default=0)
+sub packout {
+  my ($trie,%args) = @_;
+  my $packas  = ($args{packas}  ? $args{packas} : 'L').'*';
+  my $packadd =  $args{packadd} ? $args{packadd} : 0;
+  my ($q);
+  foreach $q (0..($trie->{nq}-1)) {
+    $trie->{out}{$q} = pack($packas,
+			    (defined($trie->{out}{$q})
+			     ? (map { $_+$packadd }
+				sort { $a <=> $b }
+				keys(%{$trie->{out}{$q}}))
+			     : qw()));
+  }
+  return $trie;
+}
+
+##==============================================================================
 ## Methods: Lookup
 ##==============================================================================
 
@@ -222,6 +247,7 @@ sub a2prefix {
   my ($q,$i) = $trie->a2prefixQ($ary);
   return @$ary[0..($i-1)];
 }
+
 
 ##==============================================================================
 ## Methods: Export: Gfsm

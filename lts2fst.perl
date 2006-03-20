@@ -35,7 +35,6 @@ GetOptions(##-- General
 	   ##-- Output
 	   'output|o|F=s'        => \$outfile,
 	   'symbols|symfile|s=s' => \$symfile,
-	   'qlabels|statelabels|ql|q=s' => \$qlabfile,
 	   'nosymbols|nosyms|ns|S' => sub { $symfile=''; }, ##-- defined but empty: no symbols
 
 	   ##-- behavior
@@ -69,35 +68,42 @@ $lts_file = shift;
 mainop("loading LTS file '$lts_file'...", sub { $lts->load($lts_file) });
 
 ##-- add 'letters', 'phones', 'specials' keys
-mainop("expanding alphabet",
+mainop("expanding alphabet... ",
        sub { $lts->expand_alphabet() },
+       ''
       );
 print STDERR
-  ("$0: -> ",
+  (#"$0: -> ",
    scalar(keys %{$lts->{letters}}), " letters, ",
    scalar(keys %{$lts->{phones}}), " phones.\n");
 
-##-- expand rules
-mainop("expanding rules...",
-       sub { $lts->expand_rules() },
+##-- sanitize rules
+our $nvanilla = scalar(@{$lts->{rules}});
+mainop("sanitizing rules... ",
+       sub { $lts->sanitize_rules() },
+       ''
       );
 print STDERR
-  ("$0: -> ",
+  (#"$0 -> ",
+   "added ", scalar(@{$lts->{rules}})-$nvanilla, " default rule(s).\n",
+  );
+
+##-- expand rules
+mainop("expanding rules... ",
+       sub { $lts->expand_rules() },
+       ''
+      );
+print STDERR
+  (#"$0: -> ",
    scalar(@{$lts->{rules}}), " aliased, ",
    scalar(@{$lts->{rulex}}), " expanded.\n");
-
-##-- generate ACPM index
-mainop("generating ACPM index...",
-       sub { $acpm = $lts->toACPM(complete=>0); },
-      );
-print STDERR "$0: -> $acpm->{nq} states.\n";
 
 ##-- generate labels
 mainop("generating I/O labels...", sub { $iolabs = $lts->gfsmLabels(); });
 
 ##-- generate automaton
 mainop("generating FST...\n",
-       sub { $fst = $lts->gfsmTransducer(ilabels=>$iolabs,olabels=>$iolabs,verbose=>1); },
+       sub { $fst = $lts->gfsmTransducer(ilabels=>$iolabs,olabels=>$iolabs); },
        "$0: FST generated.\n",
       );
 
@@ -111,23 +117,10 @@ if ($outfile ne '-' && !defined($symfile)) {
 mainop("saving symbols file '$symfile'...", sub { $lts->save_symbols($symfile) })
   if ($symfile);
 
-##-- state labels
-if ($qlabfile) {
-  mainop("saving state labels file '$qlabfile'...",
-	 sub {
-	   $qlabs = $acpm->gfsmStateLabels(undef,out2str=>undef);
-	   foreach $q ($qlabs->size()..($fst->n_states-1)) {
-	     $qlabs->insert("q$q", $q);
-	   }
-	   $qlabs->save($qlabfile);
-	 });
-}
-
-
 ##-- save tfst
 mainop("saving AT&T automaton text file '$outfile'...",
        sub {
-	 $fst->print_att($outfile, lower=>$iolabs, upper=>$iolabs, states=>$qlabs);
+	 $fst->print_att($outfile, lower=>$iolabs, upper=>$iolabs);
        });
 
 
@@ -151,7 +144,6 @@ lts2fst.perl - convert an LTS ruleset to an AT&T text transducer
 
  Output:
   -output  TFSTFILE
-  -qlabels QLABFILE                ##-- state labels
   -symbols SYMFILE  , -nosymbols   ##-- default is `basename TFSTFILE`.sym
 
 =cut
