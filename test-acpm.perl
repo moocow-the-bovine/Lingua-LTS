@@ -63,8 +63,9 @@ sub testltsxb {
   print STDERR "testltsxb($ltsfile)... ";
   our $lts = Lingua::LTS->new;
   $lts->load($ltsfile);
-  $lts->expand_alphabet;
-  $lts->expand_rules;
+  $lts->expand_alphabet();
+  $lts->sanitize_rules();
+  $lts->expand_rules();
   @special = sort keys %{$lts->{specials}};
   @letters = sort ( keys(%{$lts->{letters}}), keys(%{$lts->{classes}}) );
   @phones  = sort keys %{$lts->{phones}};
@@ -1177,10 +1178,16 @@ sub lts2fst_2e {
 ## Test: 2f
 sub lts2fst_2f {
   my %args = @_;
-  our ($fst,$ilabs,$olabs) = $lts->gfsmTransducer(%args);
+  our $labs = Gfsm::Alphabet->new();
+  our $fst  = $lts->gfsmTransducer(ilabels=>$labs,olabels=>$labs,%args);
 
   ##-- DEBUG
-  fstlkp('#unterschied#', $fst,lower=>$ilabs,upper=>$olabs);
+  fstlkp('#unterschied#', $fst,lower=>$labs,upper=>$labs);
+
+  ##-- SAVE
+  my $saveas = $args{saveas} ? $args{saveas} : 'test2f';
+  $fst->save("$saveas.gfst");
+  $labs->save("$saveas.lab");
 }
 #testltstest2xb();
 #lts2fst_2f();

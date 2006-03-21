@@ -19,6 +19,7 @@ our $lts = Lingua::LTS->new();
 
 our $input_words = 0;
 our $do_expand = 0;
+our $do_sanitize = 0;
 our $do_index = 0;
 our $do_lower = 1;
 our $verbose = 0;
@@ -39,6 +40,7 @@ GetOptions(##-- General
 	   'warn|W!'   => \$lts->{apply_warn},
 
 	   'expand|x!'  => \$do_expand,
+	   'sanitize|s!' => \$do_sanitize, ##-- sanitize rules?
 	   'index|i!'   => \$do_index,
 	   'gindex|g!'  => \$do_gindex, ##-- little bit faster: real dft ought to help ...
 
@@ -88,11 +90,21 @@ $lts->load($lts_file);
 $outfh = IO::File->new(">$outfile")
   or die("$0: open failed for output file '$outfile': $!");
 
-if ($do_expand || $do_index || $do_gindex) {
+
+if ($do_expand || $do_index || $do_gindex || $do_sanitize) {
   print STDERR "$0: expanding alphabet... ";
   $lts->expand_alphabet;
   print STDERR "done.\n";
+}
 
+if ($do_sanitize) {
+  my $nplain = scalar(@{$lts->{rules}});
+  print STDERR "$0: sanitizing rules... ";
+  $lts->sanitize_rules();
+  print STDERR "added ", (scalar(@{$lts->{rules}})-$nplain), " default rules.\n";
+}
+
+if ($do_expand || $do_index || $do_gindex) {
   print STDERR "$0: expanding ", scalar(@{$lts->{rules}}), " rules... ";
   $lts->expand_rules();
   print STDERR "expanded to ", scalar(@{$lts->{rulex}}), " rules.\n";

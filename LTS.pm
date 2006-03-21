@@ -370,13 +370,13 @@ sub gfsmTransducer {
   my $norulid = scalar(@{$lts->{rules}});
   $sharedlabs->insert(pack('SS', $_, $norulid)) foreach (1..($sharedlabs->size-1));
 
-  $lts->vmsg0('progress', ") done.\n");
+  $lts->vmsg0('progress', "): done.\n");
 
   ##----------------------------
   ## IN+RHS
 
   ##-- LHS: build left-context ACPM
-  $lts->vmsg('progress',"RHS: (trie");
+  $lts->vmsg('progress',"RHS (trie");
   my $rtrie = subtrie($lts, which=>[qw(in rhs)], reversed=>1, rules=>$lts->{rules}, %args);
 
   $lts->vmsg0('progress', ', ACPM');
@@ -462,7 +462,7 @@ sub gfsmTransducer {
   ##-- RHS: reverse
   $lts->vmsg0('progress', ', reverse');
   my $rrfst = $rfst->reverse;
-  $lts->vmsg0('progress', ") done.\n");
+  $lts->vmsg0('progress', "): done.\n");
 
   ##-------------------------
   ## Ouput filter
@@ -513,32 +513,24 @@ sub gfsmTransducer {
 		       0);
     }
   }
-  $lts->vmsg0('progress', ") done.\n");
+  $lts->vmsg0('progress', "): done.\n");
 
   ##-------------------------
   ## Algebra: LHS ° rev(RHS) ° Filter
 
   $lts->vmsg('progress', "Composition: (sort");
-  #$lfst->arcsort(Gfsm::ASMUpper());
-  #$rrfst->arcsort(Gfsm::ASMLower());
-  #$filter->arcsort(Gfsm::ASMUpper());
+  $lfst->arcsort(Gfsm::ASMUpper());
+  $rrfst->arcsort(Gfsm::ASMLower());
+  $filter->arcsort(Gfsm::ASMUpper());
 
   $lts->vmsg0('progress', ', LHS @ RHS');
   my $cfst = $lfst->compose($rrfst);
-  ##-- TODO
-  #$cfst->_connect;
-  #$cfst->renumber_states;
-  ##--/TODO
-  #$cfst->arcsort(Gfsm::ASMUpper());
 
   $lts->vmsg0('progress', ' @ filter');
+  $cfst->arcsort(Gfsm::ASMUpper());
   my $fcfst = $cfst->compose($filter);
-  ##-- TODO
-  #$fcfst->_connect;
-  #$fcfst->renumber_states;
-  ##-- /TODO
-  #$fcfst->arcsort(Gfsm::ASMLower());
-  $lts->vmsg0('progress', ") done.\n");
+  $fcfst->arcsort(Gfsm::ASMLower());
+  $lts->vmsg0('progress', "): done.\n");
 
   ##-------------------------
   ## RETURN
