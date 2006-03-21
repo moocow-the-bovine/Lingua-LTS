@@ -24,6 +24,11 @@ our (@symLetters,@symPhons,@symSpecials);
 
 our $verbose = 1;
 
+our $oLetter = undef;
+our $oPhon   = undef;
+our $oSpecial = undef;
+our $oClassPrefix = undef;
+
 ##==============================================================================
 ## Command-line
 ##==============================================================================
@@ -33,14 +38,18 @@ GetOptions(##-- General
 	   ##-- debugging
 	   'verbose|v' => \$verbose,
 
-	   ##-- Symbols
+	   ##-- Symbols (input)
 	   'isymbols|isymfile|is=s' => \$isymfile,
 	   'iletter|il=s@' => \@symLetters,
 	   'iphon|ip=s@'   => \@symPhons,
 	   'ispecial|iS=s@'=> \@symSpecials,
 
 	   ##-- Output
-	   'output|o|F=s'        => \$outfile,
+	   'oletter|ol=s' => \$oLetter,
+	   'ophon|op=s'   => \$oPhon,
+	   'ospecial|oS=s'=> \$oSpecial,
+	   'oclass-prefix|oclass|oprefix|oc=s' => \$oClassPrefix,
+	   'osymbols|output|o=s'               => \$outfile,
 
 	   ##-- behavior
 	   'bos|b!' => \$lts->{implicit_bos},
@@ -77,10 +86,10 @@ mainop("loading symbols file '$isymfile'...",
        sub {
 	 $lts->load_symbols($isymfile,
 			    Letter  => (@symLetters  ? \@symLetters  : undef),
-			    Phon    => (@symPhons    ? \@symPhons   : undef),
+			    Phon    => (@symPhons    ? \@symPhons    : undef),
 			    Special => (@symSpecials ? \@symSpecials : undef),
 			   );
-       }
+       },
       )
   if ($isymfile);
 
@@ -91,43 +100,19 @@ mainop("expanding alphabet... ",
       );
 print STDERR
   (#"$0: -> ",
+   scalar(keys %{$lts->{specials}}), " specials, ",
    scalar(keys %{$lts->{letters}}), " letters, ",
    scalar(keys %{$lts->{phones}}), " phones.\n");
 
-##-- sanitize rules
-our $nvanilla = scalar(@{$lts->{rules}});
-mainop("sanitizing rules... ",
-       sub { $lts->sanitize_rules() },
-       ''
-      );
-print STDERR
-  (#"$0 -> ",
-   "added ", scalar(@{$lts->{rules}})-$nvanilla, " default rule(s).\n",
-  );
-
-##-- expand rules
-mainop("expanding rules... ",
-       sub { $lts->expand_rules() },
-       ''
-      );
-print STDERR
-  (#"$0: -> ",
-   scalar(@{$lts->{rules}}), " aliased, ",
-   scalar(@{$lts->{rulex}}), " expanded.\n");
-
-##-- generate labels
-mainop("generating I/O labels...", sub { $iolabs = $lts->gfsmLabels(); });
-
-##-- generate automaton
-mainop("generating FST...\n",
-       sub { $fst = $lts->gfsmTransducer(ilabels=>$iolabs,olabels=>$iolabs); },
-       "$0: FST generated.\n",
-      );
-
-##-- save tfst
-mainop("saving AT&T automaton text file '$outfile'...",
+##-- save symbols
+mainop("saving symbols file '$outfile'...",
        sub {
-	 $fst->print_att($outfile, lower=>$iolabs, upper=>$iolabs);
+	 $lts->save_symbols($outfile,
+			    Letter => $oLetter,
+			    Phon   => $oPhon,
+			    Special=> $oSpecial,
+			    ClassPrefix => $oClassPrefix,
+			   );
        });
 
 
@@ -140,27 +125,28 @@ __END__
 
 =head1 NAME
 
-lts2fst.perl - convert an LTS ruleset to an AT&T text transducer
+lts2sym.perl - convert an LTS ruleset to an AT&T symbols file
 
 =head1 SYNOPSIS
 
- lts2fst.perl [OPTIONS] [LTS_FILE...]
+ lts2sym.perl [OPTIONS] [LTS_FILE...]
 
  Options:
   -help
 
- Input Symbols:
-  -isymbols SYMFILE
-  -iletter  CLASSNAME
-  -iphon    CLASSNAME
-  -ispecial CLASSNAME
-
- LTS Configuration:
-  -bos , -nobos
-  -eos , -noeos
+ Input:
+  -isymbols      INPUT_SYMFILE
+  -iletter       CLASSNAME
+  -iphon         CLASSNAME
+  -ispecial      CLASSNAME
 
  Output:
-  -output  TFSTFILE
+  -osymbols      OUTPUT_SYMFILE
+  -oletter       CLASSNAME
+  -ophon         CLASSNAME
+  -ospecial      CLASSNAME
+  -oclass-prefix LTS_CLASS_PREFIX
+
 
 =cut
 

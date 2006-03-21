@@ -11,38 +11,15 @@ sub test1 {
 }
 
 ##--------------------------------------------------------------
-## brute force index
-sub testbfi {
-  my %args = @_;
-  $args{view} = 1 if (!defined($args{view}));
-
-  $lts->expand_alphabet;
-  $lts->expand_rules;
-  $lts->genIndexTries;
-
-  my $lsta_qlab = Gfsm::Alphabet->new;
-  $lsta_qlab->insert("$_:".join(',', unpack('L*', $lts->{lsta2rules}[$_])), $_)
-    foreach (0..$#{$lts->{lsta2rules}});
-  $lts->{lsta}->viewps(labels=>$lts->{bfLabs},states=>$lsta_qlab,title=>'leftSTA',bg=>1)
-    if ($args{view});
-
-  my $rpta_qlab = Gfsm::Alphabet->new;
-  $rpta_qlab->insert("$_:".join(',', unpack('L*', $lts->{rpta2rules}[$_])), $_)
-    foreach (0..$#{$lts->{rpta2rules}});
-  $lts->{rpta}->viewps(labels=>$lts->{bfLabs},states=>$rpta_qlab,title=>'rightPTA',bg=>1)
-    if ($args{view});
+## Test: symbols
+sub symtest {
+  test1;
+  $lts->load_symbols('symtest.sym');
+  $lts->expand_alphabet();
+  $lts->save_symbols('-');
 }
-#test1;
-#testbfi;
+symtest();
 
-##--------------------------------------------------------------
-## brute force search
-sub testbrute {
-  testbfi(view=>0);
-  $lts->bruteForceSearch();
-}
-test1;
-testbrute;
 
 
 ##-- main: dummy

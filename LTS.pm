@@ -124,16 +124,20 @@ sub load {
   my $fh = ref($file) ? $file : IO::File->new("<$file");
   croak(__PACKAGE__, "::load(): open failed for '$file': $!") if (!$fh);
 
-  my (@phones,$cname,@cchars, $lhs,$in,$rhs,$out);
+  my ($cname,@cchars, $lhs,$in,$rhs,$out);
   while (<$fh>) {
     chomp;
     s/(?<!\\)\;.*//g;   ##-- ignore comments
     next if (/^\s*$/);  ##-- ... and blank lines
     s/\\(.)/$1/g;       ##-- un-escape
 
-    if (/^\s*phon\s+(.*\S)\s*/) {
-      @phones = split(/\s+/,$1);
-      @{$lts->{phones0}}{@phones} = undef;
+    if (/^\s*special\s+(.*\S)\s*/) {
+      @cchars = split(/\s+/,$1);
+      @{$lts->{special0}}{@cchars} = undef;
+    }
+    elsif (/^\s*phon\s+(.*\S)\s*/) {
+      @cchars = split(/\s+/,$1);
+      @{$lts->{phones0}}{@cchars} = undef;
     }
     elsif (/^\s*class\s+(\S+)\s+(.*\S)\s*/) {
       $cname  = $1;
@@ -166,42 +170,108 @@ sub load {
 }
 
 ##--------------------------------------------------------------
+## Methods: I/O: Input: .sym
+
+## $obj = $CLASS_OR_OBJ->load_symbols($filename_or_fh,%args)
+##  + load AT&T-format symbols file
+##  + populates keys: symLetters, symPhones, symSpecial, symLines
+##  + %args
+##     Letter  => \@letterClassNames,  ##-- default: ['LtsLetter']
+##     Phon    => \@phonClassNames,    ##-- default: ['LtsPhon']
+##     Special => \@specialClassNames, ##-- default: ['LtsSpecial']
+sub load_symbols {
+  my ($lts,$file,%args) = @_;
+  $lts = $lts->new() if (!ref($lts));
+
+  my $fh = ref($file) ? $file : IO::File->new("<$file");
+  croak(__PACKAGE__, "::load(): open failed for symbols file '$file': $!") if (!$fh);
+
+  my $cLetter  = $args{Letter}  ? $args{Letter}   : 'LtsLetter';
+  my $cPhon    = $args{Phon}    ? $args{cPhon}    : 'LtsPhon';
+  my $cSpecial = $args{Special} ? $args{cSpecial} : 'LtsSpecial';
+
+  my %hLetter  = map { $_=>undef } (ref($cLetter)  ? @$cLetter  : ($cLetter));
+  my %hPhon    = map { $_=>undef } (ref($cPhon)    ? @$cPhon    : ($cPhon));
+  my %hSpecial = map { $_=>undef } (ref($cSpecial) ? @$cSpecial : ($cSpecial));
+
+  my ($class,@chars);
+  while (<$fh>) {
+    chomp;
+    s/(?<!\\)\#.*//g;   ##-- ignore comments
+    s/\\(.)/$1/g;       ##-- un-escape
+
+    push(@{$lts->{symLines}}, $_); ##-- cache loaded symbols
+
+    next if (/^\s*$/);  ##-- ... and blank lines
+
+    $_ =~ s/^\s+//;     ##-- trim leading whitespace
+    $_ =~ s/\s+$//;     ##-- ... and trailing whitespace
+
+    ($class,@chars) = split(/\s+/, $_);
+    @{$lts->{symLetters}}{@chars}  = undef if (exists($hLetter{$class}));
+    @{$lts->{symPhones}} {@chars}  = undef if (exists($hPhon{$class}));
+    @{$lts->{symSpecials}}{@chars} = undef if (exists($hSpecial{$class}));
+  }
+
+  $fh->close if (!ref($file));
+  return $lts;
+}
+
+##--------------------------------------------------------------
 ## Methods: I/O: Output: symbols
 
-## $lts = $lts->save_symbols($symbols_filename_or_fh)
+## $lts = $lts->save_symbols($symbols_filename_or_fh,%args)
 ##  + requires: lts_expaned_alphabet()
+##  + %args:
+##      Letter   => $LetterName,  ##-- symbol class name (default='LtsLetter')
+##      Phon     => $PhonName,    ##-- symbol class name (default='LtsPhon')
+##      Special  => $SpecialName  ##-- symbol class name (default='LtsSpecial')
+##      Class    => $ClassPrefix, ##-- symbol class name prefix: false for no classes (default=none)
 sub save_symbols {
-  my ($lts,$file) = @_;
+  my ($lts,$file,%args) = @_;
 
   my $fh = ref($file) ? $file : IO::File->new(">$file");
   croak(__PACKAGE__, "::save_symbols(): open failed for '$file': $!") if (!$fh);
 
+  ##-- print cached symbols-file lines, if any
+  $fh->print( (map { ($_,"\n") } @{$lts->{symLines}}), "\n") if ($lts->{symLines});
+
+  ##-- get names
+  my $Special = (exists($args{Special}) ? ($args{Special} ? $args{Special} : undef) : 'LtsSpecial');
+  my $Letter  = (exists($args{Letter})  ? ($args{Letter}  ? $args{Letter}  : undef) : 'LtsLetter');
+  my $Phon    = (exists($args{Phon})    ? ($args{Phon}    ? $args{Phon}    : undef) : 'LtsPhon');
+
   ##-- print specials
-  $lts->print_symbols_lines($fh,'Special',[
-					   @SPECIALS,
-					   (grep { !exists($SPECIALS{$_}) }
-					    sort(keys(%{$lts->{specials}})))
-					  ]);
-  $fh->print("\n");
+  if (defined($Special)) {
+    $lts->print_symbols_lines($fh, $Special, [
+					      @SPECIALS,
+					      (grep { !exists($SPECIALS{$_}) }
+					       sort(keys(%{$lts->{specials}})))
+					     ]);
+      $fh->print("\n");
+  }
 
   ##-- print letters [literals]
-  $lts->print_symbols_lines($fh,'Letter',[
-					  sort(keys(%{$lts->{letters}}))
-					 ]);
-  $fh->print("\n");
-
-  ##-- print phones (temporary)
-  $lts->print_symbols_lines($fh,'Phon',   [map { $_ } sort(keys(%{$lts->{phones}}))]);
-  $fh->print("\n");
-
-  ##-- print classes
-  my $classes = $lts->{classes};
-  my ($c);
-  foreach $c (sort(keys(%$classes))) {
-    $lts->print_symbols_lines($fh,"Class$c", [              sort(keys(%{$classes->{$c}}))]);
+  if (defined($Letter)) {
+    $lts->print_symbols_lines($fh, $Letter, [ sort(keys(%{$lts->{letters}})) ]);
     $fh->print("\n");
   }
-  $fh->print("\n");
+
+  ##-- print phones
+  if (defined($Phon)) {
+    $lts->print_symbols_lines($fh, $Phon,   [ sort(keys(%{$lts->{phones}})) ]);
+    $fh->print("\n");
+  }
+
+  ##-- print classes
+  if ($args{ClassPrefix}) {
+    my $classes = $lts->{classes};
+    my ($c);
+    foreach $c (sort(keys(%$classes))) {
+      $lts->print_symbols_lines($fh, ($args{ClassPrefix}.$c), [ sort(keys(%{$classes->{$c}})) ]);
+      $fh->print("\n");
+    }
+  }
 
   $fh->close if (!ref($file));
   return $lts;
@@ -645,26 +715,37 @@ sub matches2phones {
 ##==============================================================================
 
 ## $lts = $lts->sanitize_rules
-##  + instantiates default rules ( [ x ] = ) for each unhandled character x
+##  + instantiates default rules ( [ x ] =   ) for each unhandled letter x
+##  + instantiates default rules ( [ X ] = X ) for each unhandled special X
 ##  + requirs: $lts->expand_alphabet()
 sub sanitize_rules {
   my $lts = shift;
 
   ##-- get pseudo-set of handled characters
   my $rules = $lts->{rules};
-  my %chars = ( %{$lts->{letters}}, %{$lts->{specials}}, );
+  my %letters  = ( %{$lts->{letters}}, );
+  my %specials = ( %{$lts->{specials}}, );
+  my %syms     = ( %letters, %specials );
   my %handled = qw();
+
   my ($rul);
   foreach $rul (grep { @{$_->{lhs}}==0 && @{$_->{rhs}}==0 && @{$_->{in}}==1 } @$rules) {
     $handled{$rul->{in}[0]} = undef;
   }
-  
-  ##-- add rules for unhandled characters
+
+  ##-- add rules for unhandled letters
   my ($c);
-  delete(@chars{keys(%handled)});
+  delete(@letters{keys(%handled)});
   my $id = scalar(@$rules);
-  foreach $c (sort keys(%chars)) {
+  foreach $c (sort keys(%letters)) {
     push(@$rules, {lhs=>[],in=>[$c],rhs=>[],out=>[],id=>$id});
+    ++$id;
+  }
+
+  ##-- add rules for unhandled specials
+  delete(@specials{keys(%handled)});
+  foreach $c (sort keys(%specials)) {
+    push(@$rules, {lhs=>[],in=>[$c],rhs=>[],out=>[$c],id=>$id});
     ++$id;
   }
 
@@ -729,15 +810,21 @@ sub expand_positions {
 ##==============================================================================
 
 ## $lts = $lts->expand_alphabet()
-##   + instantiates {letters}, {phones}, {specials} keys
+##   + instantiates {letters}, {phones}, {specials} keys from rules and {sym*} keys
 sub expand_alphabet {
   my $lts = shift;
   my ($letters,$phones,$specials) = @$lts{qw(letters phones specials)} = ({},{},{});
 
+  ##-- get letters, phones, specials from symbols file (if any)
+  @$letters  {keys(%{$lts->{symLetters }})} = undef if ($lts->{symLetters });
+  @$phones   {keys(%{$lts->{symPhones  }})} = undef if ($lts->{symPhones  });
+  @$specials {keys(%{$lts->{symSpecials}})} = undef if ($lts->{symSpecials});
+
   ##-- get letters from classes
   @$letters{map { keys(%$_) } values(%{$lts->{classes}})} = undef;
 
-  ##-- get pre-defined phones
+  ##-- get pre-defined specials & phones from loaded .lts file
+  @$specials{keys %{$lts->{special0}}} = undef;
   @$phones{keys %{$lts->{phones0}}} = undef;
 
   ##-- get letters & phones from rules
@@ -749,8 +836,8 @@ sub expand_alphabet {
     @$phones{@{$r->{out}}} = undef;
   }
 
-  ##-- '#' is a special, not anything else
-  @$specials{@SPECIALS}=undef;
+  ##-- specials and classes are neither letters nor phones
+  @$specials{@SPECIALS}=undef; ##-- always special
   delete(@$letters{keys(%$specials), keys(%{$lts->{classes}}) });
   delete(@$phones{keys(%$specials)});
 
