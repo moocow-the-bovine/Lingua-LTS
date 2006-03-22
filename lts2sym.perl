@@ -20,7 +20,7 @@ our $lts = Lingua::LTS->new();
 
 our $outfile = '-';
 our $isymfile = undef;
-our (@symLetters,@symPhons,@symSpecials);
+our (@symLetters,@symPhons,@symSpecials,@symKeep);
 
 our $verbose = 1;
 
@@ -43,11 +43,13 @@ GetOptions(##-- General
 	   'iletter|il=s@' => \@symLetters,
 	   'iphon|ip=s@'   => \@symPhons,
 	   'ispecial|iS=s@'=> \@symSpecials,
+	   'ikeep|ik=s@'   => \@symKeep,
 
 	   ##-- Output
 	   'oletter|ol=s' => \$oLetter,
 	   'ophon|op=s'   => \$oPhon,
 	   'ospecial|oS=s'=> \$oSpecial,
+	   'okeep|ok=s'   => \$oKeep,
 	   'oclass-prefix|oclass|oprefix|oc=s' => \$oClassPrefix,
 	   'osymbols|output|o=s'               => \$outfile,
 
@@ -88,6 +90,7 @@ mainop("loading symbols file '$isymfile'...",
 			    Letter  => (@symLetters  ? \@symLetters  : undef),
 			    Phon    => (@symPhons    ? \@symPhons    : undef),
 			    Special => (@symSpecials ? \@symSpecials : undef),
+			    Keep    => (@symKeep     ? \@symKeep     : undef),
 			   );
        },
       )
@@ -100,6 +103,7 @@ mainop("expanding alphabet... ",
       );
 print STDERR
   (#"$0: -> ",
+   scalar(keys %{$lts->{keep}}), " keepers, ",
    scalar(keys %{$lts->{specials}}), " specials, ",
    scalar(keys %{$lts->{letters}}), " letters, ",
    scalar(keys %{$lts->{phones}}), " phones.\n");
@@ -111,6 +115,7 @@ mainop("saving symbols file '$outfile'...",
 			    Letter => $oLetter,
 			    Phon   => $oPhon,
 			    Special=> $oSpecial,
+			    Keep   => $oKeep,
 			    ClassPrefix => $oClassPrefix,
 			   );
        });
@@ -139,12 +144,14 @@ lts2sym.perl - convert an LTS ruleset to an AT&T symbols file
   -iletter       CLASSNAME
   -iphon         CLASSNAME
   -ispecial      CLASSNAME
+  -ikeep         CLASSNAME
 
  Output:
   -osymbols      OUTPUT_SYMFILE
   -oletter       CLASSNAME
   -ophon         CLASSNAME
   -ospecial      CLASSNAME
+  -okeep         CLASSNAME
   -oclass-prefix LTS_CLASS_PREFIX
 
 

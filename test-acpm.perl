@@ -921,6 +921,29 @@ sub lts2fst_2e {
   }
   vmsg0("done.\n");
 
+  ##-- LHS: norule
+  vmsg('lhs: norule');
+  our $norulid = scalar(@{$lts->{rules}});
+  $sharedlabs->insert(pack('SS', $_, $norulid)) foreach (1..($ilabs->size-1));
+  if ($debug) {
+    $sharedlabs_d->insert(($sharedlabs_d->find_key($_)."~<norule>"),
+			  $sharedlabs->find_label(pack('SS',$_,$norulid)))
+      foreach (1..($ilabs->size-1));
+  }
+
+  ##-- LHS: keepers: arcs (q --a:a--> q) for q \in Q_{LHS}, c \in %keep
+  my $nshared_packed = $sharedlabs->size;
+  foreach $c (keys(%{$lts->{keep}})) {
+    $lo = $ilabs->get_label($c);
+    $hi = $sharedlabs->get_label(pack('SS', $lo, $norulid));
+    $sharedlabs_d->insert("${c}~<norule>", $hi) if ($debug);
+
+    foreach $q (0..($lfst->n_states-1)) {
+      $lfst->add_arc($q,$q, $lo,$hi, 0);
+    }
+  }
+  vmsg0("done.\n");
+
 
   ##----------------------------
   ## IN+RHS
@@ -967,11 +990,24 @@ sub lts2fst_2e {
   my $rullabs = Gfsm::Alphabet->new;
   $rullabs->insert('<eps>', 0);
   $rullabs->insert($lts->{rules}[$_], $_+1) foreach (0..$#{$lts->{rules}});
+  $rullabs->insert({lhs=>[],rhs=>[],in=>[],out=>[],id=>$norulid}, $norulid+1);
+  my $nrullabs_ids = $rullabs->size;
+  ##-- <keep=STR>
+  $rullabs->insert("<keep=$_>") foreach (sort(keys(%{$lts->{keep}})));
 
   if ($debug) {
     our $rullabs_d = Gfsm::Alphabet->new;
     $rullabs_d->insert('<eps>', 0);
-    $rullabs_d->insert(rule2str($lts->{rules}[$_]), $_+1) foreach (0..$#{$lts->{rules}});
+
+    ##-- rules
+    $rullabs_d->insert(rule2str($lts->{rules}[$_]), $_+1)
+      foreach (0..$#{$lts->{rules}});
+
+    ##--  <norule>
+    $rullabs_d->insert('<norule>', $norulid+1);    ##-- <norule>
+
+    ##-- <keep=STR>
+    $rullabs_d->insert("<keep=$_>") foreach (sort(keys(%{$lts->{keep}})));
 
     our $rqlabs = $racpm->gfsmStateLabels(undef,out2str=>undef);
   }
@@ -985,7 +1021,7 @@ sub lts2fst_2e {
   my $sharedlabs_a = $sharedlabs->asArray;
   my $sharedlabs_h = $sharedlabs->asHash;
   my ($ilab,@rulids,$sharedlab);
-  foreach $sharedlab (1..$#$sharedlabs_a) {
+  foreach $sharedlab (1..($nshared_packed-1)) {
     ($ilab,@rulids) = unpack('S*', $sharedlabs_a->[$sharedlab]);
     foreach $rulid (@rulids) {
       push(@{$cr2shared->{$ilab.' '.$rulid}}, $sharedlab);
@@ -1026,19 +1062,29 @@ sub lts2fst_2e {
 	}
       } else {
 	##-- no output defined for state: add a '<norule>' transition (and warn)
-	warn("no output defined for RACPM state q$qto -- using <norule>!\n")
-	  if (!exists($warnedabout{$qto}));
-	$warnedabout{$qto} = undef;
-
-	$rfst->add_arc($q,$qto, 1,$rullabs->get_label('<norule>'), 0);
-	if ($debug) {
-	  $rullabs_d->insert('<norule>');
+	if (!exists($warnedabout{$qto})) {
+	  $lts->vmsg0('error', "\n");
+	  $lts->vmsg('error', "no output defined for RACPM state q$qto -- using <norule>!\n");
+	  $warnedabout{$qto} = undef;
 	}
+
+	$rfst->add_arc($q,$qto, $sharedlabs->get_label(pack('SS',$lo,$norulid)),$norulid+1, 0);
       }
     }
     ##-- check for state finality
     $rfst->is_final($q,1) if (exists($racpm->{out}{$q}));
   }
+
+  ##-- RHS: keepers: arcs (q --a:a--> q) for q \in Q_{RHS}, c \in %keep
+  foreach $c (keys(%{$lts->{keep}})) {
+    $lo = $sharedlabs->get_label(pack('SS', $ilabs->find_label($c), $norulid));
+    $hi = $rullabs->find_label("<keep=$c>");
+
+    foreach $q (0..($rfst->n_states-1)) {
+      $rfst->add_arc($q,$q, $lo,$hi, 0);
+    }
+  }
+
   vmsg0("done.\n");
 
   ##-------------------------
@@ -1057,7 +1103,7 @@ sub lts2fst_2e {
   $filter->is_weighted(0);
   $filter->root(0);
   $filter->is_final(0,1);
-  $filter->add_arc(0,0, 1,0, 0);
+  $filter->add_arc(0,0, $norulid+1,0, 0); ##-- <norule> (?)
   my @consume = (0,0);
   my ($rul,$inlen,$rulout,$qfrom,$clen,$rullab,$i);
   $qmax = 1;
@@ -1073,7 +1119,7 @@ sub lts2fst_2e {
 	$qto   = $consume[$clen-1];
 
 	##-- add an arc from consume($n) to consume($n-1) for each output rule
-	foreach $rullab (1..($#{$lts->{rules}}+2)) {
+	foreach $rullab (1..($nrullabs_ids-1)) {
 	  $filter->add_arc($qfrom, $qto, $rullab,0, 0);
 	}
       }
@@ -1090,6 +1136,16 @@ sub lts2fst_2e {
 		       0);
     }
   }
+
+  ##-- Filter: keepers: arcs (q --a:a--> q) for q \in @consume, a \in %keep
+  foreach $c (keys(%{$lts->{keep}})) {
+    $lo = $rullabs->find_label("<keep=$c>");
+    $hi = $folabs->get_label($c);
+    foreach $q (@consume[1..$#consume]) {
+      $filter->add_arc($q,$q, $lo,$hi, 0);
+    }
+  }
+
   vmsg0("done.\n");
 
   ##-------------------------
@@ -1182,18 +1238,20 @@ sub lts2fst_2f {
   our $fst  = $lts->gfsmTransducer(ilabels=>$labs,olabels=>$labs,%args);
 
   ##-- DEBUG
-  fstlkp('#unterschied#', $fst,lower=>$labs,upper=>$labs);
+  $lts->{apply_verbose}=1;
+  fstlkp('ab~ba', $fst,lower=>$labs,upper=>$labs);
+  #fstlkp('unterschied', $fst,lower=>$labs,upper=>$labs);
 
   ##-- SAVE
   my $saveas = $args{saveas} ? $args{saveas} : 'test2f';
   $fst->save("$saveas.gfst");
   $labs->save("$saveas.lab");
 }
-#testltstest2xb();
-#lts2fst_2f();
-##--
-testims2xb;
+testltstest2xb();
 lts2fst_2f();
+##--
+#testims2xb;
+#lts2fst_2f();
 exit(0);
 
 ##--------------------------------------------------------------

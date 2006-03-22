@@ -6,195 +6,28 @@
 
 ;;phon A E B P
 
+keep ~
+
 ;;;---------------------------------------------------------------------
 ;;; Classes
-class  V  a e i o u
-class  Vb a o u 
-class  C  b c d f g h j k l m n p q r s t v w x z
-class  Cu p t k f s          ;; sch st sp ch: also in this group 
-class  Cx b c d f g k p t    ;; ph th also in this group
-class  Cy b c f g k l m n q v w z     ;; ph also in this group
-class  Cz b c d f g j k l m n p q r t v w z
-class  RL r l
-class  NL n l
 
-;;-- moo: hack: dummy class '*'
-class  *  a b c d e f g h i j k l m n o p q r s t u v w x y z
-;;class  *  ä ö ü ß
-;;-- /moo
-
-class eos #
 
 ;;;---------------------------------------------------------------------
 ;;; Rules
 
 ;; a a [ a ] = AA\<A
 ;; a [ a ] = A\<A
-;;  [ a b ] = P
+
 
 ;; a   Vwl [ a ] = AVA
 ;; Vwl   a [ a ] = VAA
 ;;     Vwl [ a ] = VA
 ;;       a [ a ] = AA
-;;         [ a ] = A
+         [ a ] a = A + A
+         [ a ] = A
 
-
-;; [ b ] # = P
+ [ b ] # = P
 ;; a [ b ] = P
-;; [ b b ] = B
+ [ b b ] = B
 ;;  [ b ] b = B\>B
-;;  [ b ]   = B
-
-
-;; [ c h ] = C         ;; R027b: ch
-;; [ c ]   = k         ;; R030: c sonst
-
-;; [ d ] # = t        ;; R037: d/dd am Wortende 
-;; [ d ] = d
-
-;; [ e ] d = e:     ;; R051: e vor einem Konsonant  (HACK)
-;; [ e ] = @        ;; R058: e vor Vokal ausser Diphtong
-
-;; [ h ] = h
-
-;; [ i e ] = i:        ;; R078: ie    
-;; [ i ]   = i:        ;; R083: i vor Vokal ausser Diphtong      
-
-;;d [ s c h ] = Z
-;;  [ s c h ] = S       ;; R118-120: sch 
-;;  [ s ] c   = s       ;; [ s ] Cz = s        ;; R125: im Wortinneren 
-;;  [ s ]     = z       ;; R130: sonstige s
-
-
-  # C * [ e e ] # = e:        ;;R0044: e am Wortende  
-
-    [ e ] # = @         ;;-- moo: schwa: e->schwa at EOW (?)
-
-  # C * [ e r ] # = e: R    ;; R046: er am Wortende  
-
-    [ e r ] # = 6  
-;;;    [ e r ] C = 6           ;; er vor Konsonant besser nicht wegen 'kern' 
-
-    [ e l ] # = @ l         ;; R047: el am Wortende
-
-  # C * [ e n ] # = e: n    ;; R048: en am Wortende
-
-    [ e n ] # = @ n   
-
-  # C * [ e m ] # = e: m    ;; R049: em am Wortende
-
-    [ e m ] # = @ m   
-
-  # C * [ e s ] # = E  s    ;; R050: es am Wortende
-
-    [ e s ] # = @ s   
-
-    [ e a u ] # = o:    ;; R054: eau am Wortende     
-    [ e i h ] = aI      ;; R055: eih    
-    [ e i ] = aI        ;; R055: ei     
-    [ e y ] = aI        ;; R056: ey    
-    [ e u ] = OY        ;; R057: eu     
-
-;;    [ é u ] = OY        ;; R057: eu     ;;-- moo
-
-    [ e e h ] = e:   
-    [ e e ] = e:        ;; R043: ee   
-    [ e h ] C = e:      ;; R052: eh
-
-    [ e ] Cx RL = @     ;; R045: e vor einer Buchstabenfolge 
-    [ e ] p h RL = @   
-    [ e ] t h RL = @   
-    [ e ] q u = @   
-
-    [ e ] C C = E       ;; R053: e vor mehreren Konsonanten ;;-- moo: plus: was [ e ] C C + = E
-    [ e ] C = e:        ;; R051: e vor einem Konsonant 
-
-    [ e ] = @           ;; R058: e vor Vokal ausser Diphtong  
-
-  a i [ n g ] = n g        ;; no eunge, etc...
-  a y [ n g ] = n g        ;; no eunge, etc...
-  e i [ n g ] = n g        ;; no eunge, etc...
-  e y [ n g ] = n g        ;; no eunge, etc...
-  a u [ n g ] = n g        ;; no eunge, etc...
-  a i [ n k ] = n k        ;; no eunke, etc...
-  a y [ n k ] = n k        ;; no eunke, etc...
-  e i [ n k ] = n k        ;; no eunke, etc...
-  e y [ n k ] = n k        ;; no eunke, etc...
-  a u [ n k ] = n k        ;; no eunke, etc...
-    [ n g ] = N         ;; R094: n vor g  
-    [ n k ] = N k        ;; R095: n vor k        
-    [ n n ]  = n  
-    [ n ]  = n          ;; R093: n oder nn !! skip R092
-
-
-    [ t s c h ] = tS   ;; R137: tsch  !! skip R136   
-    [ t t h ] = t  
-    [ t t ] = t         ;; R131/132: tt 
-    [ t h ] = t         ;; R133: th     
-    [ t s ] = t s       ;; R135: ts oder tz    
-    [ t z ] = t s 
-    [ t i o n ] = t s j o: n
-    [ t ] = t           ;; R132: t 
-
-
-    [ u e ] # = y:      ;; R138: ue am Wortende    
-    [ u e u e h ] = y:    
-    [ u e u e ] = y:    
-    [ u e h ] = y:      ;; R139: ueh
-
-    [ u e ] C C = Y   ;; R140: vor mehreren Konsonanten ;;-- moo: plus: was:     [ u e ] C C + = Y
-
-    [ u e ] = y:      ;; R141: vor einem Konsonant
-  # C * [ u ] # = u:        ;; R145: am Wortende    
-    [ u ] # = U     
-    [ u u h ] = u:     
-    [ u u ] = u:       
-    [ u h ] C = u:        ;; R142: uh      
-    [ u ] Cx RL = U     ;; R146: u vor einer Buchstabenfolge 
-    [ u ] p h RL = U    
-    [ u ] t h RL = U   
-    [ u ] q u = U   
-
-    [ u e ] C C  = Y   ;; R140: vor mehreren Konsonanten ;;-- moo: plus: was:     [ u ] C C + = U
-
-    [ u ] = u:        ;; R143: vor einem Konsonant 
-
-
-
-
-
-;;    [ ä ] = E:       ;; R014: ''a vor einem Konsonant
-    [ a ] = a:       ;; R011: a vor Vokal ausser Diphtong   
-    [ b ] = p          ;; R026: sonstige b's im Wortinneren
-    [ c ] = k          ;; R030: sonst
-    [ d ] = t           ;; R040: sonstige d's im Wortinneren 
-
-;;    [ e ] n # = @       ;;-- test schwa / output filter
-;;    [ e ] = e:           ;; R058: e vor Vokal ausser Diphtong  
-
-    [ f ] = f         
-    [ g ] = g     
-    [ h ] =             ;; R076: sonst ist h stumm
-    [ i ] = i:          ;; R083: i vor Vokal ausser Diphtong      
-;;    [ î ] = aI ;;-- moo
-    [ j ] = j          
-    [ k ] = k            ;; R086: kk Vokal 
-    [ l ] = l
-    [ m ] = m
-;;    [ n ] = n
-    [ o ] = o:        ;; R103: o vor einem Konsonant
-    [ p ] = p           
-    [ q ] = k           ;; q als k
-    [ r ] = R           ;;
-;;    [ ß ] = s           ;; R128/129: ss /  stimmloses s  
-    [ s ] = z           ;; R130: sonstige s
-;;    [ t ] = t           ;; R132: t 
-;;    [ ü ] = y:        ;; R141: vor einem Konsonant
-;;    [ u ] = u:        ;; R143: vor einem Konsonant 
-    [ v ] = f           ;; R148: v oder vv    
-    [ w ] = v          
-    [ x ] = k s         ;; R153: x     
-    [ y ] = y:          ;; sonst
-    [ z ] = ts         ;; R160: z oder zz !!skip R159     
-
- [ # ] = 
+  [ b ]   = B

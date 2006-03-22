@@ -20,7 +20,7 @@ our $lts = Lingua::LTS->new();
 
 our $outfile = '-';
 our $isymfile = undef;
-our (@symLetters,@symPhons,@symSpecials);
+our (@symLetters,@symPhons,@symSpecials,@symKeep);
 
 our $verbose = 1;
 
@@ -38,6 +38,7 @@ GetOptions(##-- General
 	   'iletter|il=s@' => \@symLetters,
 	   'iphon|ip=s@'   => \@symPhons,
 	   'ispecial|iS=s@'=> \@symSpecials,
+	   'ikeep|ik=s@'   => \@symKeep,
 
 	   ##-- Output
 	   'output|o|F=s'        => \$outfile,
@@ -79,6 +80,7 @@ mainop("loading symbols file '$isymfile'...",
 			    Letter  => (@symLetters  ? \@symLetters  : undef),
 			    Phon    => (@symPhons    ? \@symPhons   : undef),
 			    Special => (@symSpecials ? \@symSpecials : undef),
+			    Keep    => (@symKeep     ? \@symKeep   : undef),
 			   );
        }
       )
@@ -91,6 +93,8 @@ mainop("expanding alphabet... ",
       );
 print STDERR
   (#"$0: -> ",
+   scalar(keys %{$lts->{specials}}), " special(s), ",
+   scalar(keys %{$lts->{keep}}), " keeper(s), ",
    scalar(keys %{$lts->{letters}}), " letters, ",
    scalar(keys %{$lts->{phones}}), " phones.\n");
 

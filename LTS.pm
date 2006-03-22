@@ -1,3 +1,4 @@
+## -*- Mode: CPerl -*-
 ## File: Lingua::LTS.pm
 ## Author: Bryan Jurish <moocow@ling.uni-potsdam.de>
 ## Descript: festival-style letter-to-sound rules
@@ -49,6 +50,7 @@ our %VERBOSE = (
 ##     letters => \%letters,      ##-- pseudo-set: req: expand_alphabet()
 ##     phones  => \%phones,       ##-- pseudo-set: req: expand_alphabet()
 ##     specials => \%specials,    ##-- pseudo-set: req: expand_alphabet()
+##     keep     => \%keepers,     ##-- pseudo-set: req: expand_alphabet() [for fst generation]
 ##     ##
 ##     ##-- Options
 ##     implicit_bos => $bool,     ##-- default=1
@@ -64,10 +66,18 @@ sub new {
   return bless({
 		classes=>{},
 		rules=>[],
+
+		##-- expanded alphabet
 		letters=>{},
 		phones=>{},
-		phones0=>{},
 		specials=>{%SPECIALS},
+
+		##-- loaded alphabet
+		phones0=>{},
+		keep0=>{},
+		specials0=>{},
+
+		##-- flags
 		apply_verbose=>0,
 		apply_warn=>1,
 		implicit_bos=>1,
@@ -108,10 +118,12 @@ sub vmsg0 {
 ## $obj = $CLASS_OR_OBJ->load($filename_or_fh)
 ##  + File Syntax:
 ##    LTS_FILE ::= LTS_LINE*
-##    LTS_LINE ::= ( BLANK | COMMENT | PHON | CLASS | IGNORE | RULE ) "\n"
+##    LTS_LINE ::= ( BLANK | COMMENT | PHON | SPECIAL | KEEP | CLASS | IGNORE | RULE ) "\n"
 ##    BLANK    ::= (whitespace)
 ##    COMMENT  ::= ";" (anything)
-##    PHON     ::= "phon" PHONSTRINGS
+##    PHON     ::= "phon" PHONSYMS
+##    SPECIAL  ::= "special" SPECIALSYMS
+##    KEEP     ::= "keep" KEEPSYMS
 ##    CLASS    ::= "class" CLASS_NAME CHARS
 ##    CLASS_NAME ::= (string)
 ##    CHARS      ::= ((string) | "#") *
@@ -134,6 +146,10 @@ sub load {
     if (/^\s*special\s+(.*\S)\s*/) {
       @cchars = split(/\s+/,$1);
       @{$lts->{special0}}{@cchars} = undef;
+    }
+    elsif (/^\s*keep\s+(.*\S)\s*/) {
+      @cchars = split(/\s+/,$1);
+      @{$lts->{keep0}}{@cchars} = undef;
     }
     elsif (/^\s*phon\s+(.*\S)\s*/) {
       @cchars = split(/\s+/,$1);
@@ -179,6 +195,7 @@ sub load {
 ##     Letter  => \@letterClassNames,  ##-- default: ['LtsLetter']
 ##     Phon    => \@phonClassNames,    ##-- default: ['LtsPhon']
 ##     Special => \@specialClassNames, ##-- default: ['LtsSpecial']
+##     Keep    => \@keepClassNames,    ##-- default: ['LtsKeep']
 sub load_symbols {
   my ($lts,$file,%args) = @_;
   $lts = $lts->new() if (!ref($lts));
@@ -187,12 +204,14 @@ sub load_symbols {
   croak(__PACKAGE__, "::load(): open failed for symbols file '$file': $!") if (!$fh);
 
   my $cLetter  = $args{Letter}  ? $args{Letter}   : 'LtsLetter';
-  my $cPhon    = $args{Phon}    ? $args{cPhon}    : 'LtsPhon';
-  my $cSpecial = $args{Special} ? $args{cSpecial} : 'LtsSpecial';
+  my $cPhon    = $args{Phon}    ? $args{Phon}     : 'LtsPhon';
+  my $cSpecial = $args{Special} ? $args{Special}  : 'LtsSpecial';
+  my $cKeep    = $args{Keep}    ? $args{Keep}     : 'LtsKeep';
 
   my %hLetter  = map { $_=>undef } (ref($cLetter)  ? @$cLetter  : ($cLetter));
   my %hPhon    = map { $_=>undef } (ref($cPhon)    ? @$cPhon    : ($cPhon));
   my %hSpecial = map { $_=>undef } (ref($cSpecial) ? @$cSpecial : ($cSpecial));
+  my %hKeep    = map { $_=>undef } (ref($cKeep)    ? @$cKeep    : ($cKeep));
 
   my ($class,@chars);
   while (<$fh>) {
@@ -210,7 +229,8 @@ sub load_symbols {
     ($class,@chars) = split(/\s+/, $_);
     @{$lts->{symLetters}}{@chars}  = undef if (exists($hLetter{$class}));
     @{$lts->{symPhones}} {@chars}  = undef if (exists($hPhon{$class}));
-    @{$lts->{symSpecials}}{@chars} = undef if (exists($hSpecial{$class}));
+    @{$lts->{symSpecials}}{@chars} = undef if (exists($hSpecial{$class}));+
+    @{$lts->{symKeep}}{@chars}     = undef if (exists($hKeep{$class}));
   }
 
   $fh->close if (!ref($file));
@@ -226,6 +246,7 @@ sub load_symbols {
 ##      Letter   => $LetterName,  ##-- symbol class name (default='LtsLetter')
 ##      Phon     => $PhonName,    ##-- symbol class name (default='LtsPhon')
 ##      Special  => $SpecialName  ##-- symbol class name (default='LtsSpecial')
+##      Keep     => $KeepName,    ##-- symbol class name (default='LtsKeep')
 ##      Class    => $ClassPrefix, ##-- symbol class name prefix: false for no classes (default=none)
 sub save_symbols {
   my ($lts,$file,%args) = @_;
@@ -240,6 +261,7 @@ sub save_symbols {
   my $Special = (exists($args{Special}) ? ($args{Special} ? $args{Special} : undef) : 'LtsSpecial');
   my $Letter  = (exists($args{Letter})  ? ($args{Letter}  ? $args{Letter}  : undef) : 'LtsLetter');
   my $Phon    = (exists($args{Phon})    ? ($args{Phon}    ? $args{Phon}    : undef) : 'LtsPhon');
+  my $Keep    = (exists($args{Keep})    ? ($args{Keep}    ? $args{Keep}    : undef) : 'LtsKeep');
 
   ##-- print specials
   if (defined($Special)) {
@@ -254,6 +276,12 @@ sub save_symbols {
   ##-- print letters [literals]
   if (defined($Letter)) {
     $lts->print_symbols_lines($fh, $Letter, [ sort(keys(%{$lts->{letters}})) ]);
+    $fh->print("\n");
+  }
+
+  ##-- print keepers
+  if (defined($Keep)) {
+    $lts->print_symbols_lines($fh, $Keep,   [ sort(keys(%{$lts->{keep}})) ]);
     $fh->print("\n");
   }
 
@@ -358,17 +386,8 @@ sub _acpm_joinout {
 sub gfsmLabels {
   my $lts = shift;
   my $labs = Gfsm::Alphabet->new;
-  $labs->insert($_) foreach ('<epsilon>', map { sort keys %$_ } @$lts{qw(specials letters phones)});
+  $labs->insert($_) foreach ('<epsilon>', map { sort keys %$_ } @$lts{qw(specials keep letters phones)});
   return $labs;
-}
-
-## @symLines = $lts->gfsmSymbolsLines()
-##   + requires: $lts->expand_alphabet()
-sub gfsmSymbolsLines {
-  my $lts = shift;
-  return ($lts->symbols_lines('Special', $lts->{specials}), "\n",
-	  $lts->symbols_lines('Letter', $lts->{letters}), "\n",
-	  $lts->symbols_lines('Phon', $lts->{phones}), "\n");
 }
 
 ##--------------------------------------------------------------
@@ -438,8 +457,17 @@ sub gfsmTransducer {
   ##-- LHS: norule
   $lts->vmsg0('progress', ', norule');
   my $norulid = scalar(@{$lts->{rules}});
-  $sharedlabs->insert(pack('SS', $_, $norulid)) foreach (1..($sharedlabs->size-1));
+  $sharedlabs->insert(pack('SS', $_, $norulid)) foreach (1..($ilabs->size-1));
 
+  ##-- LHS: keepers: arcs (q --a:a--> q) for q \in Q_{LHS}, c \in %keep
+  my $nshared_packed = $sharedlabs->size;
+  foreach $c (keys(%{$lts->{keep}})) {
+    $lo = $ilabs->get_label($c);
+    $hi = $sharedlabs->get_label(pack('SS', $lo, $norulid));
+    foreach $q (0..($lfst->n_states-1)) {
+      $lfst->add_arc($q,$q, $lo,$hi, 0);
+    }
+  }
   $lts->vmsg0('progress', "): done.\n");
 
   ##----------------------------
@@ -465,8 +493,10 @@ sub gfsmTransducer {
   my $rullabs = Gfsm::Alphabet->new();
   $rullabs->insert('<epsilon>', 0);
   $rullabs->insert($lts->{rules}[$_], $_+1) foreach (0..$#{$lts->{rules}});
-  $rullabs->insert({lhs=>[],rhs=>[],in=>[],out=>[],id=>$norulid}, $norulid);
-  ##-- TODO: <norule>
+  $rullabs->insert({lhs=>[],rhs=>[],in=>[],out=>[],id=>$norulid}, $norulid+1);    ##-- <norule>
+  my $nrullabs_ids = $rullabs->size;
+  ##-- <keep=STR>
+  $rullabs->insert("<keep=$_>") foreach (sort(keys(%{$lts->{keep}})));
 
   ##-- IN+RHS: indexing
   $lts->vmsg0('progress', ', index');
@@ -476,7 +506,7 @@ sub gfsmTransducer {
   my $sharedlabs_a = $sharedlabs->asArray;
   my $sharedlabs_h = $sharedlabs->asHash;
   my ($ilab,$rulid,@rulids,$sharedlab);
-  foreach $sharedlab (1..$#$sharedlabs_a) {
+  foreach $sharedlab (1..($nshared_packed-1)) {
     ($ilab,@rulids) = unpack('S*', $sharedlabs_a->[$sharedlab]);
     foreach $rulid (@rulids) {
       push(@{$cr2shared->{$ilab.' '.$rulid}}, $sharedlab);
@@ -527,6 +557,15 @@ sub gfsmTransducer {
     }
     ##-- check for state finality
     $rfst->is_final($q,1) if (exists($racpm->{out}{$q}));
+  }
+
+  ##-- RHS: keepers: arcs (q --a:a--> q) for q \in Q_{RHS}, c \in %keep
+  foreach $c (keys(%{$lts->{keep}})) {
+    $lo = $sharedlabs->get_label(pack('SS', $ilabs->find_label($c), $norulid));
+    $hi = $rullabs->find_label("<keep=$c>");
+    foreach $q (0..($rfst->n_states-1)) {
+      $rfst->add_arc($q,$q, $lo,$hi, 0);
+    }
   }
 
   ##-- RHS: reverse
@@ -581,6 +620,15 @@ sub gfsmTransducer {
       $filter->add_arc($qmax-1, ($i==$#$rulout ? $consume[$inlen] : ($qmax++)),
 		       0,       $folabs->get_label($rulout->[$i]),
 		       0);
+    }
+  }
+
+  ##-- Filter: keepers: arcs (q --a:a--> q) for q \in @consume, a \in %keep
+  foreach $c (keys(%{$lts->{keep}})) {
+    $lo = $rullabs->find_label("<keep=$c>");
+    $hi = $folabs->get_label($c);
+    foreach $q (@consume[1..$#consume]) {
+      $filter->add_arc($q,$q, $lo,$hi, 0);
     }
   }
   $lts->vmsg0('progress', "): done.\n");
@@ -726,6 +774,7 @@ sub sanitize_rules {
   my %letters  = ( %{$lts->{letters}}, );
   my %specials = ( %{$lts->{specials}}, );
   my %syms     = ( %letters, %specials );
+  delete(@syms{keys(%{$lts->{keep}})});
   my %handled = qw();
 
   my ($rul);
@@ -813,19 +862,21 @@ sub expand_positions {
 ##   + instantiates {letters}, {phones}, {specials} keys from rules and {sym*} keys
 sub expand_alphabet {
   my $lts = shift;
-  my ($letters,$phones,$specials) = @$lts{qw(letters phones specials)} = ({},{},{});
+  my ($letters,$phones,$specials,$keep) = @$lts{qw(letters phones specials keep)} = ({},{},{},{});
 
   ##-- get letters, phones, specials from symbols file (if any)
   @$letters  {keys(%{$lts->{symLetters }})} = undef if ($lts->{symLetters });
   @$phones   {keys(%{$lts->{symPhones  }})} = undef if ($lts->{symPhones  });
   @$specials {keys(%{$lts->{symSpecials}})} = undef if ($lts->{symSpecials});
+  @$keep     {keys(%{$lts->{symKeep}})}     = undef if ($lts->{symKeep    });
 
   ##-- get letters from classes
   @$letters{map { keys(%$_) } values(%{$lts->{classes}})} = undef;
 
-  ##-- get pre-defined specials & phones from loaded .lts file
-  @$specials{keys %{$lts->{special0}}} = undef;
+  ##-- get pre-defined keepers, specials & phones from loaded .lts file
   @$phones{keys %{$lts->{phones0}}} = undef;
+  @$specials{keys %{$lts->{special0}}} = undef;
+  @$keep{keys %{$lts->{keep0}}} = undef;
 
   ##-- get letters & phones from rules
   my ($r,$part);
@@ -836,10 +887,10 @@ sub expand_alphabet {
     @$phones{@{$r->{out}}} = undef;
   }
 
-  ##-- specials and classes are neither letters nor phones
+  ##-- specials, keeper, & classes are neither letters nor phones
   @$specials{@SPECIALS}=undef; ##-- always special
-  delete(@$letters{keys(%$specials), keys(%{$lts->{classes}}) });
-  delete(@$phones{keys(%$specials)});
+  delete(@$letters{keys(%$specials), keys(%$keep), keys(%{$lts->{classes}}) });
+  delete(@$phones{keys(%$specials), keys(%$keep)});
 
   return $lts;
 }
@@ -871,13 +922,31 @@ sub apply_word {
 ##  + get phones for word
 *apply_list = \&apply_chars;
 sub apply_chars {
-  my ($lts,$wchars,$pos) = @_;
-  $pos = 0 if (!defined($pos));
+  my ($lts,$wchars,$pos0) = @_;
+  $pos0 = 0 if (!defined($pos0));
 
   my $rules = $lts->{rules};
   my $classes = $lts->{classes};
 
   my ($rule,@phones,$newpos);
+  ##-- scan for keep-characters
+  my @keep = qw();
+  my $offset=0;
+  my ($pos);
+  for ($pos=$pos0; $pos <= $#$wchars; ) {
+    if (exists($lts->{keep}{$wchars->[$pos]})) {
+      ##-- keeper
+      if ($lts->{apply_verbose}) {
+	my $vword = join('', @$wchars[0..$pos-1], '_', @$wchars[$pos..$#$wchars]);
+	print STDERR "Keep: \'$vword' matches keep character: '$wchars->[$pos]'\n";
+      }
+      ++$offset;
+      push(@{$keep[$pos-$offset]}, splice(@$wchars, $pos, 1));
+    }
+    ++$pos;
+  }
+
+  $pos=$pos0;
  CHAR:
   while ($pos <= $#$wchars) {
     if ($wchars->[$pos] eq '#') { ++$pos; next; } ##-- ignore BOS/EOS markers
@@ -889,7 +958,11 @@ sub apply_chars {
 	}
 
 	push(@phones,@{$rule->{out}});
-	$pos = $newpos;
+
+	while ($pos < $newpos) {
+	  push(@phones, @{$keep[$pos]}) if ($keep[$pos]);
+	  ++$pos;
+	}
 	next CHAR;
       }
     }
