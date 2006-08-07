@@ -40,6 +40,9 @@ use strict;
 ##     ntoksa  => $ntokensa, ##-- #/tokens processed (alphabetic)
 ##     ndicta  => $ndicta,   ##-- #/dictionary-analyzed tokens (alphabetic)
 ##     nknowna => $nknowna,  ##-- #/known tokens (pre-, dict-, or fst-analyzed) (alphabetic)
+##
+##     ##-- errors etc
+##     errfh   => $fh,       ##-- FH for warnings/errors (default=STDERR)
 ##    )
 sub new {
   my $that = shift;
@@ -64,6 +67,9 @@ sub new {
 		ntoksa  => 0,
 		ndicta  => 0,
 		nknowna => 0,
+
+		##-- errors
+		errfh   => \*STDERR,
 
 		##-- user args
 		@_
@@ -194,8 +200,11 @@ sub analyze {
   ##-- verbose symbol check
   if ($lts->{check_symbols}) {
     foreach (grep { !defined($labs[$_]) } (0..$#labs)) {
-      print STDERR
-	(ref($lts), ": Warning: ignoring unknown character '", substr($word,$_,1), "' in word '$word'.\n");
+      $lts->{errfh}->print(ref($lts),
+			   ": Warning: ignoring unknown character '",
+			   substr($word,$_,1),
+			   "' in word '$word'.\n",
+			  );
     }
   }
   @labs = grep { defined($_) } @labs;
