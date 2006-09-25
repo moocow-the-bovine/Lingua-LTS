@@ -42,7 +42,7 @@ use strict;
 ##     nknowna => $nknowna,  ##-- #/known tokens (pre-, dict-, or fst-analyzed) (alphabetic)
 ##
 ##     ##-- errors etc
-##     errfh   => $fh,       ##-- FH for warnings/errors (default=STDERR)
+##     errfh   => $fh,       ##-- FH for warnings/errors (default=STDERR; requires: "print()" method)
 ##    )
 sub new {
   my $that = shift;
