@@ -7,10 +7,17 @@ package Lingua::LTS::Gfsm;
 use Gfsm;
 use Encode qw(encode decode);
 use utf8;
+use Tie::Cache;
 use IO::File;
 use Carp;
 
 use strict;
+
+##==============================================================================
+## Globals
+##==============================================================================
+
+our $DEFAULT_CACHE_SIZE = 2048;
 
 ##==============================================================================
 ## Constructors etc.
@@ -25,7 +32,12 @@ use strict;
 ##     labh => \%sym2lab, ##-- label hash
 ##     laba => \@lab2sym, ##-- label array
 ##     dict => \%dict,    ##-- exception dictionary
+##     eow  => $str,      ##-- EOW string for analysis FST
 ##     result=>$resultfst, ##-- result fst
+##
+##     ##-- LRU Cache
+##     cache => $tiedCache, ##-- uses Tie::Cache
+##     cacheSize => $n,     ##-- cache size (default = ${__PACKAGE__."::DEFAULT_CACHE_SIZE"})
 ##
 ##     ##-- Options
 ##     check_symbols => $bool,  ##-- check for unknown symbols? (default=1)
@@ -46,34 +58,59 @@ use strict;
 ##    )
 sub new {
   my $that = shift;
-  return bless({
-		##-- analysis objects
-		fst=>Gfsm::Automaton->new,
-		lab=>Gfsm::Alphabet->new,
-		result=>Gfsm::Automaton->new,
-		labh=>{},
-		laba=>[],
-		dict=>{},
+  my $lts = bless({
+		   ##-- analysis objects
+		   fst=>Gfsm::Automaton->new,
+		   lab=>Gfsm::Alphabet->new,
+		   result=>Gfsm::Automaton->new,
+		   labh=>{},
+		   laba=>[],
+		   dict=>{},
+		   eow=>'',
 
-		##-- options
-		check_symbols => 1,
-		labenc        => 'latin1',
+		   ##-- cache options
+		   cache=>{},
+		   cacheSize=>$DEFAULT_CACHE_SIZE,
 
-		##-- profiling
-		profile => 0,
-		ntoks   => 0,
-		ndict   => 0,
-		nknown  => 0,
-		ntoksa  => 0,
-		ndicta  => 0,
-		nknowna => 0,
+		   ##-- options
+		   check_symbols => 1,
+		   labenc        => 'latin1',
 
-		##-- errors
-		errfh   => \*STDERR,
+		   ##-- profiling
+		   profile => 0,
 
-		##-- user args
-		@_
-	       }, ref($that)||$that);
+		   ntoks   => 0,
+		   ndict   => 0,
+		   nknown  => 0,
+		   ncache  => 0,
+
+		   ntoksa  => 0,
+		   ndicta  => 0,
+		   nknowna => 0,
+		   ncachea  => 0,
+
+		   ##-- errors
+		   errfh   => \*STDERR,
+
+		   ##-- user args
+		   @_
+		  }, ref($that)||$that);
+  $lts->resetCache();
+  return $lts;
+}
+
+## $lts = $lts->resetCache()
+##  + resets cache
+sub resetCache {
+  my $lts = shift;
+  %{$lts->{cache}} = qw();
+  if ($lts->{cacheSize} > 0) {
+    tie(%{$lts->{cache}}, 'Tie::Cache', { MaxCount=>$lts->{cacheSize} })
+      or confess(ref($lts)."::resetCache(): could not create cache!");
+  } else {
+    $lts->{cache} = {};
+  }
+  return $lts;
 }
 
 ## $lts = $lts->clear()
@@ -87,6 +124,9 @@ sub clear {
   %{$lts->{labh}} = qw();
   @{$lts->{laba}} = qw();
   %{$lts->{dict}} = qw();
+
+  ##-- cache
+  %{$lts->{cache}} = qw();
 
   ##-- profiling
   return $lts->resetProfilingData();
@@ -102,6 +142,8 @@ sub resetProfilingData {
   $lts->{ntoksa} = 0;
   $lts->{ndicta} = 0;
   $lts->{nknowna} = 0;
+  $lts->{ncache} = 0;
+  $lts->{ncachea} = 0;
   return $lts;
 }
 
@@ -187,51 +229,62 @@ sub analyze {
   ++$lts->{ntoks} if ($lts->{profile});
   ++$lts->{ntoksa} if ($isalpha);
 
-  ##-- exception check
+  ##-- dictionary check
   if (exists($lts->{dict}{$uword})) {
     ++$lts->{ndict};
     ++$lts->{ndicta} if ($isalpha);
     return $lts->{dict}{$uword};
   }
 
-  ##-- FST lookup
-  my @labs = @{$lts->{labh}}{split(//, $uword)};
-
-  ##-- verbose symbol check
-  if ($lts->{check_symbols}) {
-    foreach (grep { !defined($labs[$_]) } (0..$#labs)) {
-      $lts->{errfh}->print(ref($lts),
-			   ": Warning: ignoring unknown character '",
-			   substr($word,$_,1),
-			   "' in word '$word'.\n",
-			  );
-    }
+  my ($analyses);
+  if (defined($analyses=$lts->{cache}{$uword})) {
+    ##-- cache check
+    ++$lts->{ncache};
+    ++$lts->{ncachea} if ($isalpha);
   }
-  @labs = grep { defined($_) } @labs;
+  else {
+    ##-- FST lookup
+    my @labs = @{$lts->{labh}}{split(//, $uword.$lts->{eow})};
 
-  ##-- lookup
-  $lts->{fst}->lookup(\@labs,$lts->{result});
-  my @analyses =
-    (
-     grep { $_ ne '' }
-     map {
-       join('',
-	    map {
-	      length($lts->{laba}[$_]) > 1 ? "[$lts->{laba}[$_]]" : $lts->{laba}[$_]
-	    } @{$_->{hi}}
-	   )
-     } @{$lts->{result}->paths($Gfsm::LSUpper)}
-    );
+    ##-- verbose symbol check
+    if ($lts->{check_symbols}) {
+      foreach (grep { !defined($labs[$_]) } (0..$#labs)) {
+	$lts->{errfh}->print(ref($lts),
+			     ": Warning: ignoring unknown character '",
+			     substr($word,$_,1),
+			     "' in word '$word'.\n",
+			    );
+      }
+    }
+    @labs = grep { defined($_) } @labs;
 
-  if ($lts->{profile} && @analyses) {
+    ##-- lookup
+    $lts->{fst}->lookup(\@labs,$lts->{result});
+    $analyses =
+      [
+       grep { $_ ne '' }
+       map {
+	 join('',
+	      map {
+		length($lts->{laba}[$_]) > 1 ? "[$lts->{laba}[$_]]" : $lts->{laba}[$_]
+	      } @{$_->{hi}}
+	     )
+       } @{$lts->{result}->paths($Gfsm::LSUpper)}
+      ];
+
+    ##-- cache these analyses
+    $lts->{cache}{$uword} = $analyses if ($lts->{cacheSize});
+  }
+
+  if ($lts->{profile} && @$analyses) {
     ++$lts->{nknown};
     ++$lts->{nknowna} if ($isalpha);
   }
 
   return (wantarray
-	  ? @analyses
-	  : (@analyses
-	     ? $analyses[0]
+	  ? @$analyses
+	  : (@$analyses
+	     ? $analyses->[0]
 	     : $uword));
 }
 
