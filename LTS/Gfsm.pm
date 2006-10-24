@@ -152,6 +152,19 @@ sub resetProfilingData {
 ##==============================================================================
 
 ##--------------------------------------------------------------
+## Methods: I/O: Input: all
+
+## $lts = $lts->load(fst=>$fstFile, lab=>$labFile, dict=>$dictFile)
+sub load {
+  my ($lts,%args) = @_;
+  my $rc = $lts;
+  $rc &&= $lts->loadFst($args{fst}) if (defined($args{fst}));
+  $rc &&= $lts->loadLabels($args{lab}) if (defined($args{lab}));
+  $rc &&= $lts->loadDict($args{dict}) if (defined($args{dict}));
+  return $rc;
+}
+
+##--------------------------------------------------------------
 ## Methods: I/O: Input: Dictionary
 
 ## $lts = $lts->loadDict($dictfile)
