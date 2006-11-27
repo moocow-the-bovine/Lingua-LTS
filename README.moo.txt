@@ -16,5 +16,5 @@ DETAILS:
 
 SEE ALSO:
 
- perldoc perlmodinstall
- ../bin/lts-analyze.perl
+ `perldoc perlmodinstall`     : module documentation, with more SEE ALSO references
+ `../bin/lts-analyze.perl -h` : for LTS analysis with a generated Gfsm FST
