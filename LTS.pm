@@ -1479,6 +1479,14 @@ Institut für Maschinelle Sprachverarbeitung, Universität Stuttgart,
 URL: http://www.ims.uni-stuttgart.de/phonetik/synthesis
 
 
+=item lts2fst.perl
+
+=item lts2sym.perl
+
+=item lts-apply.perl
+
+=item lts-info.perl
+
 =item Lingua::LTS::Trie(3perl)
 
 =item Lingua::LTS::ACPM(3perl)

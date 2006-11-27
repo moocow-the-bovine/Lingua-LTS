@@ -130,7 +130,7 @@ __END__
 
 =head1 NAME
 
-lts2sym.perl - convert an LTS ruleset to an AT&T symbols file
+lts2sym.perl - convert a Lingua::LTS ruleset to an AT&T symbols file
 
 =head1 SYNOPSIS
 

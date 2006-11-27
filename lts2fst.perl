@@ -144,7 +144,7 @@ __END__
 
 =head1 NAME
 
-lts2fst.perl - convert an LTS ruleset to an AT&T text transducer
+lts2fst.perl - convert a Lingua::LTS ruleset to an AT&T text transducer
 
 =head1 SYNOPSIS
 

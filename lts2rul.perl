@@ -97,11 +97,14 @@ __END__
 
 =head1 NAME
 
-lts2rul.perl - convert LTS rules to AT&T context-dependent rewrite rules
+lts2rul.perl - convert Lingua::LTS rules to AT&T context-dependent rewrite rules [--BROKEN--]
 
 =head1 SYNOPSIS
 
- lts2rul.perl [OPTIONS] [LTS_FILE...]
+ !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+ !! BROKEN - DO NOT USE
+ !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+ #lts2rul.perl [OPTIONS] [LTS_FILE...]
 
  Options:
   -help
