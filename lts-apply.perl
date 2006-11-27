@@ -170,7 +170,7 @@ __END__
 
 =head1 NAME
 
-lts-apply.perl - apply LTS rules
+lts-apply.perl - apply Lingua::LTS rules
 
 =head1 SYNOPSIS
 

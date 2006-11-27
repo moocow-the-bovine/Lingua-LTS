@@ -1099,13 +1099,62 @@ __END__
 
 =head1 NAME
 
-Lingua::LTS - Festival-style letter-to-sound rules
+Lingua::LTS - compiler/interpreter for festival-style letter-to-sound rules
 
 =head1 SYNOPSIS
 
+ ##-------------------------------------------------------------
+ ## Requirements
+ use Gfsm;         ##-- requires version >= 0.207
  use Lingua::LTS;
 
- #... stuff happens
+ ##-------------------------------------------------------------
+ ## Constructors, Destructors, etc.
+ $class = 'Lingua::LTS';
+ $lts   = $class->new(%args);    ##-- new object
+
+ ##-------------------------------------------------------------
+ ## Methods: I/O
+
+ $lts = $lts->load($file);          ##-- load an .lts file
+ $lts = $class->load($file);        ##-- ... into a new object
+
+ $lts = $lts->load_symbols($file,%args);   ##-- load symbols file
+ $lts = $class->load_symbols($file,%args); ##-- ... into new obj
+
+ $lts = $lts->save_symbols($file,%args);   ##-- save symbols file
+
+ ##-------------------------------------------------------------
+ ## Methods: compilation: general (expansion)
+
+ $lts = $lts->expand_alphabet();  ##-- expand character classes (OFTEN REQUIRED)
+ $lts = $lts->expand_rules();     ##-- expand class-based rules (OFTEN REQUIRED)
+
+ $lts = $lts->sanitize_rules();   ##-- various sanity checks (RECCOMMENDED)
+
+ ##-------------------------------------------------------------
+ ## Methods: compilation: Aho-Corasick Pattern Matcher
+
+ $acpm = $lts->toACPM(%args);        ##-- Step 1: Lingua::LTS::ACPM object
+
+ ##-------------------------------------------------------------
+ ## Methods: compilation: Gfsm Finite-State Transducer
+
+ $lab = $lts->gfsmLabels();          ##-- Step 2: Gfsm::Alphabet object
+ $fst = $lts->gfsmTransducer(%args); ##-- Step 3: Gfsm::Automaton object
+
+ ##-------------------------------------------------------------
+ ## Methods: Lookup
+
+ @phones = $lts->apply_word_indexed_acpm($word); ##-- via ACPM
+ @phones = $lts->apply_word($word);              ##-- linear search (SLOW!)
+ @phones = $lts->apply_chars(\@chars);           ##-- linear search (SLOW!)
+
+ ##-------------------------------------------------------------
+ ## Methods: Information
+
+ $info = $lts->info();  ##-- informational HASH-ref
+
 
 =cut
 
@@ -1116,7 +1165,9 @@ Lingua::LTS - Festival-style letter-to-sound rules
 
 =head1 DESCRIPTION
 
-Not yet written.
+Lingua::LTS provides an object-oriented compiler/interpreter for
+deterministic letter-to-sound rules with festival-like syntax and semantics
+(see papers and links below for details).
 
 =cut
 
@@ -1127,7 +1178,275 @@ Not yet written.
 
 =head1 METHODS
 
-Not yet written.
+=cut
+
+##-------------------------------------------------------------
+## Constructors, Destructors, etc.
+=pod
+
+=head2 Constructors, Destructors, etc.
+
+=over 4
+
+=item $lts = Lingua::LTS->new(%args)
+
+Creates and returns a new Lingua::LTS object.  Object returned is a blessed HASH-ref.
+C<%args> may contain the following options (and more):
+
+  ##-- Options
+  implicit_bos => $bool,     ##-- default=1
+  implicit_eos => $bool,     ##-- default=1
+
+  ##-- debugging
+  apply_verbose => $bool,    ##-- be verbose about linear search rule application?
+  apply_warn=>$bool,         ##-- emit warning messages when applying rules?
+  verbose=>$level,           ##-- for operations which might take a long time
+
+=back
+
+=cut
+
+
+##-------------------------------------------------------------
+## Methods: I/O
+=pod
+
+=head2 Methods: I/O
+
+=over 4
+
+=item $lts = $lts->load($file)
+
+=item $lts = Lingua::LTS->load($file)
+
+Loads an .lts file into a (new) Lingua::LTS object. 
+C<$file> may be either a filename or an open filehandle.
+See L<LTS File Syntax> for details on .lts file syntax.
+
+
+=item $lts = $lts->load_symbols($file,%args)
+
+=item $lts = $class->load_symbols($file,%args)
+
+Loads a .sym file (AT&T lextools format) into an existing Lingua::LTS object.
+C<$file> may be either a filename or an open filehandle.
+The following options may be passed in %args:
+
+  Letter  => \@letterClassNames,  ##-- default: ['LtsLetter']
+  Phon    => \@phonClassNames,    ##-- default: ['LtsPhon']
+  Special => \@specialClassNames, ##-- default: ['LtsSpecial']
+  Keep    => \@keepClassNames,    ##-- default: ['LtsKeep']
+
+... this allows manipulation of the LTS alphabet via a non-LTS syntax.
+
+
+=item $lts = $lts->save_symbols($file,%args)
+
+Requires: expand_alphabet()
+
+Saves a .sym file (AT&T lextools format) containing the alphabet of
+a Lingua::LTS object.
+C<$file> may be either a filename or an open filehandle.
+The following options may be passed in %args:
+
+  Letter  => \@letterClassNames,  ##-- default: ['LtsLetter']
+  Phon    => \@phonClassNames,    ##-- default: ['LtsPhon']
+  Special => \@specialClassNames, ##-- default: ['LtsSpecial']
+  Keep    => \@keepClassNames,    ##-- default: ['LtsKeep']
+  Class   => $ClassPrefix, ##-- symbol class name prefix: false for no classes (default=none)
+
+=back
+
+=cut
+
+
+##-------------------------------------------------------------
+## Methods: compilation: general (expansion)
+=pod
+
+=head2 Methods: compilation: general (expansion)
+
+=over 4
+
+
+=item $lts = $lts->expand_alphabet()
+
+Instantiates internal alphabet structures stored in keys
+{letters}, {phones}, and {specials}.
+Alphabet information is expanded based on rules and {sym*}
+keys (as read from .sym file, if any).
+
+Required by many methods.
+
+
+=item $lts = $lts->expand_rules()
+
+Requires: expand_alphabet()
+
+Expands all class names occurring in {rules} into all
+literal characters of the corresponding class.  Expanded
+rules are stored in {rulex}.
+
+Required by many methods.
+
+
+=item $lts = $lts->sanitize_rules()
+
+Requires: expand_alphabet()
+
+Performs some sanity checks on defined rules.  Highly reccommended.
+
+=over 4
+
+=item *
+
+instantiates default rules ( [ x ] =   ) for each unhandled letter x
+
+=item *
+
+instantiates default rules ( [ X ] = X ) for each unhandled special X
+
+=back
+
+
+=back
+
+=cut
+
+
+##-------------------------------------------------------------
+## Methods: compilation: Aho-Corasick Pattern Matcher
+=pod
+
+=head2 Methods: compilation: Aho-Corasick Pattern Matcher
+
+=over 4
+
+=item $acpm = $lts->toACPM(%args)
+
+Requires: expand_alphabet(), expand_rules()
+
+Compiles an Aho-Corasick Pattern Matcher as a Lingua::LTS::ACPM object from the rules in $lts.
+Compiled ACPM is cached in C<$lts-E<gt>{acpm}>.
+
+=back
+
+=cut
+
+
+##-------------------------------------------------------------
+## Methods: compilation: Gfsm Finite-State Transducer
+=pod
+
+=head2 Methods: compilation: Gfsm Finite-State Transducer
+
+=over 4
+
+=item $lab = $lts->gfsmLabels()
+
+Requires: expand_alphabet()
+
+Returns a Gfsm::Alphabet object representing the terminal labels
+used by C<$lts>.
+
+
+=item $fst = $lts->gfsmTransducer(%args)
+
+Requires: toACPM()
+
+Compiles and returns a Gfsm::Automaton transducer for deterministic
+application of the LTS ruleset.
+Returned transducer is cached in C<$lts-E<gt>{fst}>,
+its input labels are cached in C<$lts-E<gt>{fstilabs}>,
+and its output labels are cached in C<$lts-E<gt>{fstolabs}>.
+Valid options in %args:
+
+  ilabels=>$ilabs, ##-- default = $lts->gfsmLabels()
+  olabels=>$olabs, ##-- default = $ilabs
+
+=back
+
+=cut
+
+
+##-------------------------------------------------------------
+## Methods: Lookup
+=pod
+
+=head2 Methods: Lookup
+
+=over 4
+
+=item @phones = $lts->apply_word_indexed_acpm($word)
+
+Requires: toACPM()
+
+Apply LTS ruleset to word $word (a string), using compiled ACPM
+for indexed lookup.  Really only useful for testing.
+
+
+=item @phones = $lts->apply_word($word)
+
+Requires: expand_alphabet() ?
+
+Apply LTS ruleset to word $word (a string), using linear search
+over all (expanded) rules.  Very slow.  Only really useful for testing.
+
+=item @phones = $lts->apply_chars(\@chars)
+
+Requires: expand_alphabet() ?
+
+Apply LTS ruleset to an array of characters \@chars, using linear search
+over all (expanded) rules.  Very slow.  Only really useful for testing.
+
+
+=back
+
+=cut
+
+
+##-------------------------------------------------------------
+## Methods: Information
+=pod
+
+=head2 Methods: Information
+
+=over 4
+
+=item $info = $lts->info()
+
+Returns a HASH-reference containing some summary information about the LTS object.
+
+=back
+
+=cut
+
+##==============================================================================
+## Footer
+##==============================================================================
+=pod
+
+=head1 LTS File Syntax
+
+LTS rulefiles as read by the Lingua::LTS::load() method do not read
+festival SCHEME syntax directly, but rather a related format.  It is almost
+trivial to convert festival SCHEME syntax to Lingua::LTS syntax, but
+some decisions -- particularly involving class membership and class-based rules --
+must be made by a human being.  The syntax for LTS files is given in pseudo-BNF
+notation below:
+
+  LTS_FILE ::= LTS_LINE*
+  LTS_LINE ::= ( BLANK | COMMENT | PHON | SPECIAL | KEEP | CLASS | IGNORE | RULE ) "\n"
+  BLANK    ::= (whitespace)
+  COMMENT  ::= ";" (anything)
+  PHON     ::= "phon" PHONSYMS
+  SPECIAL  ::= "special" SPECIALSYMS
+  KEEP     ::= "keep" KEEPSYMS
+  CLASS    ::= "class" CLASS_NAME CHARS
+  CLASS_NAME ::= (string)
+  CHARS      ::= ((string) | "#") *
+  IGNORE     ::= "ignore" CHARS
+  RULE       ::= RULE_LHS "[" RULE_IN "]" RULE_RHS "=" RULE_OUT
 
 =cut
 
@@ -1137,8 +1456,55 @@ Not yet written.
 ##==============================================================================
 =pod
 
+=head1 SEE ALSO
+
+=over 4
+
+=item *
+
+A. Black and P. Taylor, "Festival Speech Synthesis System".
+Technical Report HCRC/TR-83,
+University of Edinburgh, Centre for Speech Technology Research,
+1997.
+
+URL: http://www.cstr.ed.ac.uk/projects/festival
+
+=item *
+
+G. Möhler, A. Schweitzer, and Mark Breitenbücher,
+"{IMS} {G}erman {F}estival Manual, version 1.2".
+Institut für Maschinelle Sprachverarbeitung, Universität Stuttgart,
+17 July, 2001.
+
+URL: http://www.ims.uni-stuttgart.de/phonetik/synthesis
+
+
+=item Lingua::LTS::Trie(3perl)
+
+=item Lingua::LTS::ACPM(3perl)
+
+=item Lingua::LTS::Automaton(3perl)
+
+=item Lingua::LTS::Gfsm(3perl)
+
+=item Gfsm(3perl)
+
+URL: http://www.ling.uni-potsdam.de/~moocow/projects/gfsm
+
+=back
+
+
+
 =head1 AUTHOR
 
 Bryan Jurish E<lt>moocow@bbaw.deE<gt>
+
+=head1 COPYRIGHT AND LICENSE
+
+Copyright (C) 2005-2006 by Bryan Jurish
+
+This library is free software; you can redistribute it and/or modify
+it under the same terms as Perl itself, either Perl version 5.8.4 or,
+at your option, any later version of Perl 5 you may have available.
 
 =cut
