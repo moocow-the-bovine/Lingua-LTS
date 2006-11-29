@@ -25,6 +25,21 @@ WriteMakefile
   );
 
 
-#-----------------------------------------------------------------------
-# Extensions
-#-----------------------------------------------------------------------
+##-----------------------------------------------------------------------
+## Extensions
+##-----------------------------------------------------------------------
+
+sub MY::postamble {
+  # how to format the README file
+  "README.txt : README.POD\n"
+  ."\tpod2text README.POD README.txt\n\n";
+}
+
+sub MY::dist_core {
+  package MY;
+  my $inherited = shift->SUPER::dist_core(@_);
+  $inherited =~
+    # ... distribution requires current README file
+    s/^dist\s*:/dist\ : README.txt/m;
+  $inherited;
+}

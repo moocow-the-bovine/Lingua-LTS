@@ -22,4 +22,11 @@ CVS
 \.pid$
 \.log$
 
-^testme.perl$
+^testme\.perl$
+
+^footer\.POD$
+^lts.*\.lts$
+^test.*
+
+\.graveyard$
+README\.moo\.txt
