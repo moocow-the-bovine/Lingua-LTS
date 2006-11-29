@@ -1491,8 +1491,6 @@ URL: http://www.ims.uni-stuttgart.de/phonetik/synthesis
 
 =item Lingua::LTS::ACPM(3perl)
 
-=item Lingua::LTS::Automaton(3perl)
-
 =item Lingua::LTS::Gfsm(3perl)
 
 =item Gfsm(3perl)
@@ -1509,7 +1507,7 @@ Bryan Jurish E<lt>moocow@bbaw.deE<gt>
 
 =head1 COPYRIGHT AND LICENSE
 
-Copyright (C) 2005-2006 by Bryan Jurish
+Copyright (C) 2006 by Bryan Jurish
 
 This library is free software; you can redistribute it and/or modify
 it under the same terms as Perl itself, either Perl version 5.8.4 or,
