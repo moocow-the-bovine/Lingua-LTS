@@ -30,3 +30,5 @@ CVS
 
 \.graveyard$
 README\.moo\.txt
+
+^lts2rul\.perl$

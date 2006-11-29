@@ -21,7 +21,9 @@ WriteMakefile
 		    'Time::HiRes'=>undef,
 		   },
 
-   EXE_FILES    => [qw(lts-apply.perl lts2rul.perl)],
+   EXE_FILES    => [qw(lts2fst.perl lts2sym.perl),
+		    qw(lts-apply.perl lts-info.perl),
+		   ],
   );
 
 
