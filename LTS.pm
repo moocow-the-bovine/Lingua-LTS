@@ -17,7 +17,7 @@ use Carp;
 ## Constants
 ##==============================================================================
 
-our $VERSION = 0.02;
+our $VERSION = 0.03;
 
 ##-- always specials
 our @SPECIALS = ('#');
@@ -55,6 +55,9 @@ our %VERBOSE = (
 ##     ##-- Options
 ##     implicit_bos => $bool,     ##-- default=1
 ##     implicit_eos => $bool,     ##-- default=1
+##     weight_rule   => $weight,  ##-- default=0
+##     weight_norule => $weight,  ##-- default=0
+##     weight_keep   => $weight,  ##-- default=0
 ##     ##
 ##     ##-- debugging
 ##     apply_verbose => $bool,
@@ -83,6 +86,11 @@ sub new {
 		implicit_bos=>1,
 		implicit_eos=>1,
 		verbose=>$VERBOSE{default},
+		##
+		##-- weight options
+		weight_rule   =>0,
+		weight_keep   =>0,
+		weight_norule =>0,
 		@_
 	       }, ref($that)||$that);
 }
@@ -439,7 +447,7 @@ sub gfsmTransducer {
   my $lfst = Gfsm::Automaton->new();
   $lfst->sort_mode(Gfsm::ASMNone());
   $lfst->is_transducer(1);
-  $lfst->is_weighted(0);
+  #$lfst->is_weighted(0);
   $lfst->root(0);
   my ($q,$qto,$gotoq,$c,$qoutp,$lo,$hi);
   foreach $q (0..($lacpm->{nq}-1)) {
@@ -518,7 +526,7 @@ sub gfsmTransducer {
   my $rfst = Gfsm::Automaton->new();
   $rfst->sort_mode(Gfsm::ASMNone());
   $rfst->is_transducer(1);
-  $rfst->is_weighted(0);
+  #$rfst->is_weighted(0);
   $rfst->root(0);
   my %warnedabout = qw();
   my ($sharedlab_matches,%used_shared_labs);
@@ -586,10 +594,10 @@ sub gfsmTransducer {
   $lts->vmsg0('progress', ', FST');
   my $filter = Gfsm::Automaton->new;
   $filter->is_transducer(1);
-  $filter->is_weighted(0);
+  $filter->is_weighted(1);
   $filter->root(0);
   $filter->is_final(0,1);
-  $filter->add_arc(0,0, $norulid+1,0, 0); ##-- <norule> (?)
+  $filter->add_arc(0,0, $norulid+1,0, ($lts->{weight_norule}||0)); ##-- <norule> (?)
   my @consume = (0,0);
   my ($rul,$inlen,$rulout,$qfrom,$clen,$rullab,$i);
   my $qmax = 1;
@@ -615,7 +623,7 @@ sub gfsmTransducer {
     $rulout = $rul->{out};
     $filter->add_arc(0,        ($#$rulout <= 0 ? $consume[$inlen]                 : ($qmax++)),
 		     $rulid+1, ($#$rulout >= 0 ? $folabs->get_label($rulout->[0]) : 0),
-		     0);
+		     ($lts->{weight_rule}||0) );
     foreach $i (1..$#$rulout) {
       $filter->add_arc($qmax-1, ($i==$#$rulout ? $consume[$inlen] : ($qmax++)),
 		       0,       $folabs->get_label($rulout->[$i]),
@@ -628,7 +636,7 @@ sub gfsmTransducer {
     $lo = $rullabs->find_label("<keep=$c>");
     $hi = $folabs->get_label($c);
     foreach $q (@consume[1..$#consume]) {
-      $filter->add_arc($q,$q, $lo,$hi, 0);
+      $filter->add_arc($q,$q, $lo,$hi, ($lts->{weight_keep}||0) );
     }
   }
   $lts->vmsg0('progress', "): done.\n");

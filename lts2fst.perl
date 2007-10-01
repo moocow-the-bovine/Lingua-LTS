@@ -46,6 +46,9 @@ GetOptions(##-- General
 	   ##-- behavior
 	   'bos|b!' => \$lts->{implicit_bos},
 	   'eos|e!' => \$lts->{implicit_eos},
+	   'weight-rule|wr=f'       => \$lts->{weight_rule},
+	   'weight-norule|wnr|wn=f' => \$lts->{weight_norule},
+	   'weight-keep|wk=f'       => \$lts->{weight_keep},
 	  );
 
 pod2usage({-exitval=>0, -verbose=>0}) if ($help);
@@ -162,6 +165,9 @@ lts2fst.perl - convert a Lingua::LTS ruleset to an AT&T text transducer
  LTS Configuration:
   -bos , -nobos
   -eos , -noeos
+  -weight-rule  =WEIGHT  # weight for rule applications (default=0)
+  -weight-keep  =WEIGHT  # weight for declared 'keep' symbols (default=0)
+  -weight-norule=WEIGHT  # weight when no rules are applicable (default=0)
 
  Output:
   -output  TFSTFILE
