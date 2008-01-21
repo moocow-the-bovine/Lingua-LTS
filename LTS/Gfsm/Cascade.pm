@@ -1,10 +1,12 @@
 ## -*- Mode: CPerl -*-
-## File: Lingua::LTS::Gfsm.pm
+## File: Lingua::LTS::Gfsm::Cascade.pm
 ## Author: Bryan Jurish <moocow@ling.uni-potsdam.de>
-## Description: Gfsm-based letter-to-sound transduction
+## Description: Gfsm::XL::Cascade -based transductions
 
-package Lingua::LTS::Gfsm;
+package Lingua::LTS::Gfsm::Cascade;
+use Lingua::LTS::Gfsm;
 use Gfsm;
+use Gfsm::XL;
 use Encode qw(encode decode);
 use utf8;
 use Tie::Cache;
@@ -17,7 +19,7 @@ use strict;
 ## Globals
 ##==============================================================================
 
-our $DEFAULT_CACHE_SIZE = 2048;
+our $DEFAULT_CACHE_SIZE = $Lingua::LTS::Gfsm::DEFAULT_CACHE_SIZE;
 
 ##==============================================================================
 ## Constructors etc.
@@ -27,13 +29,18 @@ our $DEFAULT_CACHE_SIZE = 2048;
 ##  + object structure:
 ##    (
 ##     ##-- Analysis objects
-##     fst  => $gfst,     ##-- a Gfsm::Automaton object (default=new)
+##     fst  => $cl,       ##-- a Gfsm::XL::Cascade::Lookup object (default=new)
 ##     lab  => $lab,      ##-- a Gfsm::Alphabet object (default=new)
 ##     labh => \%sym2lab, ##-- label hash
 ##     laba => \@lab2sym, ##-- label array
 ##     dict => \%dict,    ##-- exception dictionary
 ##     eow  => $str,      ##-- EOW string for analysis FST
 ##     result=>$resultfst, ##-- result fst
+##
+##     ##-- Lookup options (new)
+##     max_paths  => $max_paths,  ##-- sets $cl->max_paths()
+##     max_weight => $max_weight, ##-- sets $cl->max_weight()
+##     max_ops    => $max_ops,    ##-- sets $cl->max_ops()
 ##
 ##     ##-- LRU Cache
 ##     cache => $tiedCache, ##-- uses Tie::Cache
@@ -42,8 +49,6 @@ our $DEFAULT_CACHE_SIZE = 2048;
 ##     ##-- Options
 ##     check_symbols => $bool,  ##-- check for unknown symbols? (default=1)
 ##     labenc        => $enc,   ##-- encoding of labels file (default='latin1')
-##     auto_connect  => $bool,  ##-- whether to call $result->_connect() after every lookup   (default=0)
-##     auto_rmeps    => $bool,  ##-- whether to call $result->_rmepsilon() after every lookup (default=0)
 ##
 ##     ##-- Profiling data
 ##     profile => $bool,     ##-- track profiling data (default=0)
@@ -60,94 +65,51 @@ our $DEFAULT_CACHE_SIZE = 2048;
 ##    )
 sub new {
   my $that = shift;
-  my $lts = bless({
-		   ##-- analysis objects
-		   fst=>Gfsm::Automaton->new,
-		   lab=>Gfsm::Alphabet->new,
-		   result=>Gfsm::Automaton->new,
-		   labh=>{},
-		   laba=>[],
-		   dict=>{},
-		   eow=>'',
+  my $lts = $that->SUPER::new({
+			       ##-- analysis objects
+			       fst=>Gfsm::XL::Cascade::Lookup->new(),
 
-		   ##-- cache options
-		   cache=>{},
-		   cacheSize=>$DEFAULT_CACHE_SIZE,
+			       ##-- lookup options
+			       max_weight => 1e38,
+			       max_paths  => 1,
+			       max_ops    => -1,
 
-		   ##-- options
-		   check_symbols => 1,
-		   labenc        => 'latin1',
-		   auto_connect  => 0,
-		   auto_rmeps    => 0,
-
-		   ##-- profiling
-		   profile => 0,
-
-		   ntoks   => 0,
-		   ndict   => 0,
-		   nknown  => 0,
-		   ncache  => 0,
-
-		   ntoksa  => 0,
-		   ndicta  => 0,
-		   nknowna => 0,
-		   ncachea  => 0,
-
-		   ##-- errors
-		   errfh   => \*STDERR,
-
-		   ##-- user args
-		   @_
-		  }, ref($that)||$that);
-  $lts->resetCache();
+			       ##-- user args
+			       @_
+			      }, ref($that)||$that);
+  $lts->setLookupOptions();
   return $lts;
 }
 
-## $lts = $lts->resetCache()
-##  + resets cache
-sub resetCache {
-  my $lts = shift;
-  %{$lts->{cache}} = qw();
-  if ($lts->{cacheSize} > 0) {
-    tie(%{$lts->{cache}}, 'Tie::Cache', { MaxCount=>$lts->{cacheSize} })
-      or confess(ref($lts)."::resetCache(): could not create cache!");
-  } else {
-    $lts->{cache} = {};
-  }
-  return $lts;
-}
 
 ## $lts = $lts->clear()
 sub clear {
   my $lts = shift;
 
-  ##-- analysis objects
-  $lts->{fst}->clear if (UNIVERSAL::can($lts->{fst},'clear'));
-  $lts->{lab}->clear;
-  $lts->{result}->clear if ($lts->{result});
-  %{$lts->{labh}} = qw();
-  @{$lts->{laba}} = qw();
-  %{$lts->{dict}} = qw();
+  $lts->{fst}->_cascade_set(undef);
 
-  ##-- cache
-  %{$lts->{cache}} = qw();
-
-  ##-- profiling
-  return $lts->resetProfilingData();
+  ##-- inherited
+  $lts->SUPER::clear();
 }
 
 ## $lts = $lts->resetProfilingData()
-sub resetProfilingData {
-  my $lts = shift;
-  $lts->{profile} = 0;
-  $lts->{ntoks} = 0;
-  $lts->{ndict} = 0;
-  $lts->{nknown} = 0;
-  $lts->{ntoksa} = 0;
-  $lts->{ndicta} = 0;
-  $lts->{nknowna} = 0;
-  $lts->{ncache} = 0;
-  $lts->{ncachea} = 0;
+## - inherited
+
+##--------------------------------------------------------------
+## Methods: Lookup Options
+
+## $lts = $lts->setLookupOptions(%opts)
+## + %opts keys:
+##   max_weight => $w,
+##   max_paths  => $n_paths,
+##   max_ops    => $n_ops,
+sub setLookupOptions {
+  my $lts  = shift;
+  my %opts = (%$lts,@_);
+  my $cl   = $lts->{fst};
+  $cl->max_weight($opts{max_weight}) if (defined($opts{max_weight}));
+  $cl->max_paths ($opts{max_paths}) if (defined($opts{max_paths}));
+  $cl->max_ops   ($opts{max_ops}) if (defined($opts{max_ops}));
   return $lts;
 }
 
@@ -159,49 +121,29 @@ sub resetProfilingData {
 ## Methods: I/O: Input: all
 
 ## $lts = $lts->load(fst=>$fstFile, lab=>$labFile, dict=>$dictFile)
-sub load {
-  my ($lts,%args) = @_;
-  my $rc = $lts;
-  $rc &&= $lts->loadFst($args{fst}) if (defined($args{fst}));
-  $rc &&= $lts->loadLabels($args{lab}) if (defined($args{lab}));
-  $rc &&= $lts->loadDict($args{dict}) if (defined($args{dict}));
-  return $rc;
-}
+## + inherited
 
 ##--------------------------------------------------------------
 ## Methods: I/O: Input: Dictionary
 
 ## $lts = $lts->loadDict($dictfile)
-sub loadDict {
-  my ($lts,$dictfile) = @_;
-  my $dictfh = IO::File->new("<$dictfile")
-    or confess(ref($lts),"::loadDict() open failed for dictionary file '$dictfile': $!");
-
-  my $dict = $lts->{dict};
-  my ($line,$word,$phones);
-  while (defined($line=<$dictfh>)) {
-    chomp($line);
-    next if ($line =~ /^\s*$/ || $line =~ /^\s*%/);
-    $line = decode($lts->{labenc}, $line) if ($lts->{labenc});
-    $word = lc($word) if ($lts->{tolower});
-    ($word,$phones) = split(/\t+/,$line,2);
-    $dict->{$word} = $phones;
-  }
-
-  $dictfh->close;
-  return $lts;
-}
+## + inherited
 
 
 ##--------------------------------------------------------------
 ## Methods: I/O: Input: Transducer
 
-## $lts = $lts->loadFst($fstfile)
-sub loadFst {
-  my ($lts,$fstfile) = @_;
-  $lts->{fst}->load($fstfile)
-    or confess(ref($lts)."::loadFst(): load failed for '$fstfile': $!");
-  $lts->{result} = $lts->{fst}->shadow;
+## $lts = $lts->loadCascade($cscfile)
+## $lts = $lts->loadFst    ($cscfile)
+*loadFst = \&loadCascade;
+sub loadCascade {
+  my ($lts,$cscfile) = @_;
+  my $csc = Gfsm::XL::Cascade->new();
+  $csc->load($cscfile)
+    or confess(ref($lts)."::loadCascade(): load failed for '$cscfile': $!");
+  $lts->{fst}->cascade($csc);
+  $lts->setLookupOptions();
+  $lts->{result} = undef;  ##-- reset result automaton
   return $lts;
 }
 
@@ -209,28 +151,10 @@ sub loadFst {
 ## Methods: I/O: Input: Labels
 
 ## $lts = $lts->loadLabels($labfile)
-sub loadLabels {
-  my ($lts,$labfile) = @_;
-  $lts->{lab}->load($labfile)
-    or confess(ref($lts)."::loadLabels(): load failed for '$labfile': $!");
-  $lts->parseLabels();
-  return $lts;
-}
+## + inherited
 
 ## $lts = $lts->parseLabels()
-##  + sets up $lts->{labh}, $lts->{laba}
-##  + fixes encoding difficulties in $lts->{labh},$lts->{laba}
-sub parseLabels {
-  my $lts = shift;
-  my $laba = $lts->{laba};
-  @$laba = @{$lts->{lab}->asArray};
-  my ($i);
-  foreach $i (grep { defined($laba->[$_]) } 0..$#$laba) {
-    $laba->[$i] = decode($lts->{labenc}, $laba->[$i]) if ($lts->{labenc});
-    $lts->{labh}{$laba->[$i]} = $i;
-  }
-  return $lts;
-}
+## + inherited
 
 ##==============================================================================
 ## Methods: Analysis
@@ -238,74 +162,7 @@ sub parseLabels {
 
 ## @analyses         = analyze($native_perl_word)
 ## $analysis_or_word = analyze($native_perl_word)
-sub analyze {
-  my ($lts,$word) = @_;
-  my $uword = $lts->{tolower} ? lc($word) : $word;
-
-  my $isalpha = $lts->{profile} && $word !~ /[^[:alpha:]]/;
-  ++$lts->{ntoks} if ($lts->{profile});
-  ++$lts->{ntoksa} if ($isalpha);
-
-  ##-- dictionary check
-  if (exists($lts->{dict}{$uword})) {
-    ++$lts->{ndict};
-    ++$lts->{ndicta} if ($isalpha);
-    return $lts->{dict}{$uword};
-  }
-
-  my ($analyses);
-  if (defined($analyses=$lts->{cache}{$uword})) {
-    ##-- cache check
-    ++$lts->{ncache};
-    ++$lts->{ncachea} if ($isalpha);
-  }
-  else {
-    ##-- FST lookup
-    my @labs = @{$lts->{labh}}{split(//, $uword.$lts->{eow})};
-
-    ##-- verbose symbol check
-    if ($lts->{check_symbols}) {
-      foreach (grep { !defined($labs[$_]) } (0..$#labs)) {
-	$lts->{errfh}->print(ref($lts),
-			     ": Warning: ignoring unknown character '",
-			     substr($word,$_,1),
-			     "' in word '$word'.\n",
-			    );
-      }
-    }
-    @labs = grep { defined($_) } @labs;
-
-    ##-- lookup
-    $lts->{fst}->lookup(\@labs,$lts->{result});
-    $lts->{result}->_connect()   if ($lts->{auto_connect});
-    $lts->{result}->_rmepsilon() if ($lts->{auto_rmeps});
-    $analyses =
-      [
-       grep { $_ ne '' }
-       map {
-	 join('',
-	      map {
-		length($lts->{laba}[$_]) > 1 ? "[$lts->{laba}[$_]]" : $lts->{laba}[$_]
-	      } @{$_->{hi}}
-	     )
-       } @{$lts->{result}->paths($Gfsm::LSUpper)}
-      ];
-
-    ##-- cache these analyses
-    $lts->{cache}{$uword} = $analyses if ($lts->{cacheSize});
-  }
-
-  if ($lts->{profile} && @$analyses) {
-    ++$lts->{nknown};
-    ++$lts->{nknowna} if ($isalpha);
-  }
-
-  return (wantarray
-	  ? @$analyses
-	  : (@$analyses
-	     ? $analyses->[0]
-	     : $uword));
-}
+##  + inherited
 
 
 1; ##-- be happy
