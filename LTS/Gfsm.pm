@@ -44,6 +44,7 @@ our $DEFAULT_CACHE_SIZE = 2048;
 ##     labenc        => $enc,   ##-- encoding of labels file (default='latin1')
 ##     auto_connect  => $bool,  ##-- whether to call $result->_connect() after every lookup   (default=0)
 ##     auto_rmeps    => $bool,  ##-- whether to call $result->_rmepsilon() after every lookup (default=0)
+##     analyzeWeights => $bool, ##-- if true, weights will be appended to analysis strings (default=0)
 ##
 ##     ##-- Profiling data
 ##     profile => $bool,     ##-- track profiling data (default=0)
@@ -79,6 +80,7 @@ sub new {
 		   labenc        => 'latin1',
 		   auto_connect  => 0,
 		   auto_rmeps    => 0,
+		   analyzeWeights=> 0,
 
 		   ##-- profiling
 		   profile => 0,
@@ -283,11 +285,14 @@ sub analyze {
       [
        grep { $_ ne '' }
        map {
-	 join('',
-	      map {
-		length($lts->{laba}[$_]) > 1 ? "[$lts->{laba}[$_]]" : $lts->{laba}[$_]
-	      } @{$_->{hi}}
-	     )
+	 (
+	  join('',
+	       map {
+		 length($lts->{laba}[$_]) > 1 ? "[$lts->{laba}[$_]]" : $lts->{laba}[$_]
+	       } @{$_->{hi}}
+	      )
+	  .($lts->{analyzeWeights} ? "<$_->{w}>" : '')
+	 )
        } @{$lts->{result}->paths($Gfsm::LSUpper)}
       ];
 
