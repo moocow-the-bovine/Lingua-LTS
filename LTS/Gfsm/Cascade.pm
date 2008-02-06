@@ -21,6 +21,8 @@ use strict;
 
 our $DEFAULT_CACHE_SIZE = $Lingua::LTS::Gfsm::DEFAULT_CACHE_SIZE;
 
+our @ISA = qw(Lingua::LTS::Gfsm);
+
 ##==============================================================================
 ## Constructors etc.
 ##==============================================================================
@@ -65,18 +67,18 @@ our $DEFAULT_CACHE_SIZE = $Lingua::LTS::Gfsm::DEFAULT_CACHE_SIZE;
 ##    )
 sub new {
   my $that = shift;
-  my $lts = $that->SUPER::new({
-			       ##-- analysis objects
-			       fst=>Gfsm::XL::Cascade::Lookup->new(),
+  my $lts = $that->SUPER::new(
+			      ##-- analysis objects
+			      fst=>Gfsm::XL::Cascade::Lookup->new(undef),
 
-			       ##-- lookup options
-			       max_weight => 1e38,
-			       max_paths  => 1,
-			       max_ops    => -1,
+			      ##-- lookup options
+			      max_weight => 1e38,
+			      max_paths  => 1,
+			      max_ops    => -1,
 
-			       ##-- user args
-			       @_
-			      }, ref($that)||$that);
+			      ##-- user args
+			      @_
+			     );
   $lts->setLookupOptions();
   return $lts;
 }
@@ -139,11 +141,13 @@ sub setLookupOptions {
 sub loadCascade {
   my ($lts,$cscfile) = @_;
   my $csc = Gfsm::XL::Cascade->new();
-  $csc->load($cscfile)
-    or confess(ref($lts)."::loadCascade(): load failed for '$cscfile': $!");
+  if (!$csc->load($cscfile)) {
+    confess(ref($lts)."::loadCascade(): load failed for '$cscfile': $!");
+    return undef;
+  }
   $lts->{fst}->cascade($csc);
   $lts->setLookupOptions();
-  $lts->{result} = undef;  ##-- reset result automaton
+  $lts->{result} = Gfsm::Automaton->new($csc->semiring_type);  ##-- reset result automaton
   return $lts;
 }
 

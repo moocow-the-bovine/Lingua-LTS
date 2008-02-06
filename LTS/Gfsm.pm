@@ -163,6 +163,7 @@ sub resetProfilingData {
 ## $lts = $lts->load(fst=>$fstFile, lab=>$labFile, dict=>$dictFile)
 sub load {
   my ($lts,%args) = @_;
+  return 0 if (!grep {defined($_)} @args{qw(fst lab dict)});
   my $rc = $lts;
   $rc &&= $lts->loadFst($args{fst}) if (defined($args{fst}));
   $rc &&= $lts->loadLabels($args{lab}) if (defined($args{lab}));
