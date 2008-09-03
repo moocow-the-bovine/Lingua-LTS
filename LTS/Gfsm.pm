@@ -45,6 +45,8 @@ our $DEFAULT_CACHE_SIZE = 2048;
 ##     auto_connect  => $bool,  ##-- whether to call $result->_connect() after every lookup   (default=0)
 ##     auto_rmeps    => $bool,  ##-- whether to call $result->_rmepsilon() after every lookup (default=0)
 ##     analyzeWeights => $bool, ##-- if true, weights will be appended to analysis strings (default=0)
+##     tolower        => $bool, ##-- if true, all input words will be bashed to lower-case (default=0)
+##     tolowerNI      => $bool, ##-- if true, all non-initial characters of inputs will be lower-cased (default=0)
 ##
 ##     ##-- Profiling data
 ##     profile => $bool,     ##-- track profiling data (default=0)
@@ -81,6 +83,8 @@ sub new {
 		   auto_connect  => 0,
 		   auto_rmeps    => 0,
 		   analyzeWeights=> 0,
+		   tolower => 0,
+		   tolowerNI => 0,
 
 		   ##-- profiling
 		   profile => 0,
@@ -186,7 +190,8 @@ sub loadDict {
     chomp($line);
     next if ($line =~ /^\s*$/ || $line =~ /^\s*%/);
     $line = decode($lts->{labenc}, $line) if ($lts->{labenc});
-    $word = lc($word) if ($lts->{tolower});
+    if    ($lts->{tolower})   { $word = lc($word); }
+    elsif ($lts->{tolowerNI}) { $word =~ s/^(.)(.*)$/$1\L$2\E/; }
     ($word,$phones) = split(/\t+/,$line,2);
     $dict->{$word} = $phones;
   }
@@ -243,7 +248,10 @@ sub parseLabels {
 ## $analysis_or_word = analyze($native_perl_word)
 sub analyze {
   my ($lts,$word) = @_;
-  my $uword = $lts->{tolower} ? lc($word) : $word;
+  my ($uword);
+  if    ($lts->{tolower})   { $uword = lc($uword); }
+  elsif ($lts->{tolowerNI}) { $uword =~ s/^(.)(.*)$/$1\L$2\E/; }
+  else { $uword = $word; }
 
   my $isalpha = $lts->{profile} && $word !~ /[^[:alpha:]]/;
   ++$lts->{ntoks} if ($lts->{profile});
@@ -585,7 +593,7 @@ Bryan Jurish E<lt>moocow@ling.uni-potsdam.deE<gt>
 
 =head1 COPYRIGHT AND LICENSE
 
-Copyright (C) 2006 by Bryan Jurish
+Copyright (C) 2006-2008 by Bryan Jurish
 
 This package is free software; you can redistribute it and/or modify
 it under the same terms as Perl itself, either Perl version 5.8.4 or,

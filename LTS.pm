@@ -17,7 +17,7 @@ use Carp;
 ## Constants
 ##==============================================================================
 
-our $VERSION = 0.04;
+our $VERSION = 0.05;
 
 ##-- always specials
 our @SPECIALS = ('#');
@@ -1515,7 +1515,7 @@ Bryan Jurish E<lt>moocow@bbaw.deE<gt>
 
 =head1 COPYRIGHT AND LICENSE
 
-Copyright (C) 2006 by Bryan Jurish
+Copyright (C) 2006-2008 by Bryan Jurish
 
 This library is free software; you can redistribute it and/or modify
 it under the same terms as Perl itself, either Perl version 5.8.4 or,
