@@ -248,10 +248,9 @@ sub parseLabels {
 ## $analysis_or_word = analyze($native_perl_word)
 sub analyze {
   my ($lts,$word) = @_;
-  my ($uword);
+  my $uword = $word;
   if    ($lts->{tolower})   { $uword = lc($uword); }
   elsif ($lts->{tolowerNI}) { $uword =~ s/^(.)(.*)$/$1\L$2\E/; }
-  else { $uword = $word; }
 
   my $isalpha = $lts->{profile} && $word !~ /[^[:alpha:]]/;
   ++$lts->{ntoks} if ($lts->{profile});
