@@ -51,6 +51,8 @@ our @ISA = qw(Lingua::LTS::Gfsm);
 ##     ##-- Options
 ##     check_symbols => $bool,  ##-- check for unknown symbols? (default=1)
 ##     labenc        => $enc,   ##-- encoding of labels file (default='latin1')
+##     tolower       => $bool,  ##-- if true, all input words will be bashed to lower-case (default=0)
+##     tolowerNI     => $bool,  ##-- if true, all non-initial characters of inputs will be lower-cased (default=0)
 ##
 ##     ##-- Profiling data
 ##     profile => $bool,     ##-- track profiling data (default=0)
