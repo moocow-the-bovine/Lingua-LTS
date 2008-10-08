@@ -17,7 +17,7 @@ use Carp;
 ## Constants
 ##==============================================================================
 
-our $VERSION = 0.05;
+our $VERSION = 0.06;
 
 ##-- always specials
 our @SPECIALS = ('#');
@@ -136,7 +136,8 @@ sub vmsg0 {
 ##    CLASS_NAME ::= (string)
 ##    CHARS      ::= ((string) | "#") *
 ##    IGNORE     ::= "ignore" CHARS
-##    RULE       ::= RULE_LHS "[" RULE_IN "]" RULE_RHS "=" RULE_OUT
+##    RULE       ::= RULE_LHS "[" RULE_IN "]" RULE_RHS "=" RULE_OUT RULE_COST?
+##    RULE_COST  ::= "<" (float) ">"
 sub load {
   my ($lts,$file) = @_;
   $lts = $lts->new() if (!ref($lts));
@@ -144,7 +145,7 @@ sub load {
   my $fh = ref($file) ? $file : IO::File->new("<$file");
   croak(__PACKAGE__, "::load(): open failed for '$file': $!") if (!$fh);
 
-  my ($cname,@cchars, $lhs,$in,$rhs,$out);
+  my ($cname,@cchars, $lhs,$in,$rhs,$out,$cost);
   while (<$fh>) {
     chomp;
     s/(?<!\\)\;.*//g;   ##-- ignore comments
@@ -172,8 +173,8 @@ sub load {
     elsif (/^\s*ignore\s+(.*\S)\s*/) {
       $lts->{classes}{$cname} = {};
     }
-    elsif (/^\s*([^\[]*)\[([^\]]*)\]([^\=]*)=(.*)/) {
-      ($lhs,$in,$rhs,$out) = ($1,$2,$3,$4);
+    elsif (/^\s*([^\[]*)\[([^\]]*)\]([^\=]*)=([^\<]*)(?:\<([^\>]*)\>)\s*$/) {
+      ($lhs,$in,$rhs,$out,$cost) = ($1,$2,$3,$4,$5);
       push(@{$lts->{rules}},
 	   {
 	    id=>scalar(@{$lts->{rules}}),
@@ -182,6 +183,7 @@ sub load {
 	    rhs=>[grep { defined($_) && $_ ne '' } split(/\s+/,$rhs)],
 	    #out=>[map { "=$_" } grep { defined($_) && $_ ne '' } split(/\s+/,$out)],
 	    out=>[map { "$_" } grep { defined($_) && $_ ne '' } split(/\s+/,$out)],
+	    cost=>(defined($cost) ? $cost : 0),
 	   });
     }
     else {
@@ -436,7 +438,7 @@ sub gfsmTransducer {
   $lacpm->packout(packas=>'S', packadd=>0);
 
   ##-- LHS: alphabets
-  my $ilabs = $args{ilabels} ? $args{olabels} : Gfsm::Alphabet->new();
+  my $ilabs = $args{ilabels} ? $args{ilabels} : Gfsm::Alphabet->new();
   $ilabs->insert('<epsilon>', 0) if (!defined($ilabs->find_key(0)));
 
   my $sharedlabs = Gfsm::Alphabet->new();

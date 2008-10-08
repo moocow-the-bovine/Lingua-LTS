@@ -7,6 +7,7 @@ use File::Basename qw(basename);
 
 use lib qw(.);
 use Lingua::LTS;
+use Lingua::LTS::Nd;
 use Gfsm;
 
 ##==============================================================================
@@ -44,6 +45,7 @@ GetOptions(##-- General
 	   'output|o|F=s'        => \$outfile,
 
 	   ##-- behavior
+	   'non-deterministic|nd' => sub { $lts = bless($lts,'Lingua::LTS::Nd'); },
 	   'bos|b!' => \$lts->{implicit_bos},
 	   'eos|e!' => \$lts->{implicit_eos},
 	   'weight-rule|wr=f'       => \$lts->{weight_rule},
@@ -168,6 +170,7 @@ lts2fst.perl - convert a Lingua::LTS ruleset to an AT&T text transducer
   -weight-rule  =WEIGHT  # weight for rule applications (default=0)
   -weight-keep  =WEIGHT  # weight for declared 'keep' symbols (default=0)
   -weight-norule=WEIGHT  # weight when no rules are applicable (default=0)
+  -non-deterministic     # create non-deterministic weighted output (default=no)
 
  Output:
   -output  TFSTFILE
