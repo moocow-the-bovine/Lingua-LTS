@@ -53,6 +53,7 @@ our %VERBOSE = (
 ##     keep     => \%keepers,     ##-- pseudo-set: req: expand_alphabet() [for fst generation]
 ##     ##
 ##     ##-- Options
+##     deterministic => $bool,    ##-- default=1; if false non-deterministic weighted FST will be output
 ##     implicit_bos => $bool,     ##-- default=1
 ##     implicit_eos => $bool,     ##-- default=1
 ##     weight_rule   => $weight,  ##-- default=0
@@ -88,6 +89,7 @@ sub new {
 		verbose=>$VERBOSE{default},
 		##
 		##-- weight options
+		deterministic =>1,
 		weight_rule   =>0,
 		weight_keep   =>0,
 		weight_norule =>0,
@@ -173,7 +175,7 @@ sub load {
     elsif (/^\s*ignore\s+(.*\S)\s*/) {
       $lts->{classes}{$cname} = {};
     }
-    elsif (/^\s*([^\[]*)\[([^\]]*)\]([^\=]*)=([^\<]*)(?:\<([^\>]*)\>)\s*$/) {
+    elsif (/^\s*([^\[]*)\[([^\]]*)\]([^\=]*)=([^\<]*)(?:\<([^\>]*)\>)?\s*$/) {
       ($lhs,$in,$rhs,$out,$cost) = ($1,$2,$3,$4,$5);
       push(@{$lts->{rules}},
 	   {
@@ -183,7 +185,7 @@ sub load {
 	    rhs=>[grep { defined($_) && $_ ne '' } split(/\s+/,$rhs)],
 	    #out=>[map { "=$_" } grep { defined($_) && $_ ne '' } split(/\s+/,$out)],
 	    out=>[map { "$_" } grep { defined($_) && $_ ne '' } split(/\s+/,$out)],
-	    cost=>(defined($cost) ? $cost : 0),
+	    cost=>(defined($cost) ? $cost : $lts->{weight_rule}),
 	   });
     }
     else {
@@ -503,7 +505,7 @@ sub gfsmTransducer {
   my $rullabs = Gfsm::Alphabet->new();
   $rullabs->insert('<epsilon>', 0);
   $rullabs->insert($lts->{rules}[$_], $_+1) foreach (0..$#{$lts->{rules}});
-  $rullabs->insert({lhs=>[],rhs=>[],in=>[],out=>[],id=>$norulid}, $norulid+1);    ##-- <norule>
+  $rullabs->insert({lhs=>[],rhs=>[],in=>[],out=>[],cost=>0,id=>$norulid}, $norulid+1);    ##-- <norule>
   my $nrullabs_ids = $rullabs->size;
   ##-- <keep=STR>
   $rullabs->insert("<keep=$_>") foreach (sort(keys(%{$lts->{keep}})));
@@ -531,7 +533,7 @@ sub gfsmTransducer {
   #$rfst->is_weighted(0);
   $rfst->root(0);
   my %warnedabout = qw();
-  my ($sharedlab_matches,%used_shared_labs);
+  my ($sharedlab_matches,%used_shared_labs,$outlab);
   foreach $q (0..($racpm->{nq}-1)) {
     $gotoq = $racpm->{goto}[$q];
 
@@ -540,9 +542,10 @@ sub gfsmTransducer {
       $lo = $ilabs->get_label($c);
 
       if ($racpm->{out}{$qto}) {
-	##-- get best output for each left-context set outL \in out(Q_L), outR($qto)
-	##   + add arcs: ($q --(char,OutL):OutBest(OutL,$qto)--> $qto)
-	%used_shared_labs = qw();
+	##-- map each left-context set outL \in out(Q_L), outR($qto) to output
+	##   + PRIORITY mode ($lts->{deterministic}==1): add arcs: ($q --(char,OutL):OutBest(OutL,$qto)--> $qto)
+	##   + WEIGHTED mode ($lts->{deterministic}==0): add arcs: ($q --(char,OutL):       (OutL,$qto)--> $qto)
+	%used_shared_labs = qw(); ##-- only used for priority mode
 	foreach $rulid (unpack('S*', $racpm->{out}{$qto})) {
 	  $sharedlab_matches = $cr2shared->{"$lo $rulid"};
 	  foreach $sharedlab (
@@ -551,7 +554,7 @@ sub gfsmTransducer {
 			     )
 	    {
 	      $rfst->add_arc($q,$qto, $sharedlab,$rulid+1, 0);
-	      $used_shared_labs{$sharedlab}=undef;
+	      $used_shared_labs{$sharedlab}=undef if ($lts->{deterministic});
 	    }
 	}
       } else {
@@ -601,7 +604,7 @@ sub gfsmTransducer {
   $filter->is_final(0,1);
   $filter->add_arc(0,0, $norulid+1,0, ($lts->{weight_norule}||0)); ##-- <norule> (?)
   my @consume = (0,0);
-  my ($rul,$inlen,$rulout,$qfrom,$clen,$rullab,$i);
+  my ($rul,$inlen,$rulout,$qfrom,$clen,$rullab,$i,$rulcost);
   my $qmax = 1;
   foreach $rul (@{$lts->{rules}}) {
     $rulid = $rul->{id};
@@ -622,10 +625,12 @@ sub gfsmTransducer {
     }
 
     ##-- build output path (0 -- $rulid+2 : OUT($rul) --> $consume[$inlen])
-    $rulout = $rul->{out};
+    $rulout  = $rul->{out};
+    $rulcost = (defined($rul->{cost}) ? $rul->{cost} : (defined($lts->{weight_rule}) ? $lts->{weight_rule} : 0));
     $filter->add_arc(0,        ($#$rulout <= 0 ? $consume[$inlen]                 : ($qmax++)),
 		     $rulid+1, ($#$rulout >= 0 ? $folabs->get_label($rulout->[0]) : 0),
-		     ($lts->{weight_rule}||0) );
+		     $rulcost,
+		    );
     foreach $i (1..$#$rulout) {
       $filter->add_arc($qmax-1, ($i==$#$rulout ? $consume[$inlen] : ($qmax++)),
 		       0,       $folabs->get_label($rulout->[$i]),

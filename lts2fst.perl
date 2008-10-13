@@ -7,7 +7,7 @@ use File::Basename qw(basename);
 
 use lib qw(.);
 use Lingua::LTS;
-use Lingua::LTS::Nd;
+#use Lingua::LTS::Nd;
 use Gfsm;
 
 ##==============================================================================
@@ -45,7 +45,9 @@ GetOptions(##-- General
 	   'output|o|F=s'        => \$outfile,
 
 	   ##-- behavior
-	   'non-deterministic|nd' => sub { $lts = bless($lts,'Lingua::LTS::Nd'); },
+	   'deterministic|det|d!' => \$lts->{deterministic},
+	   'non-deterministic|nondet|weighted|w|nd' => sub { $lts->{deterministic}=0; },
+	   #'non-deterministic|nd' => sub { $lts = bless($lts,'Lingua::LTS::Nd'); },
 	   'bos|b!' => \$lts->{implicit_bos},
 	   'eos|e!' => \$lts->{implicit_eos},
 	   'weight-rule|wr=f'       => \$lts->{weight_rule},
@@ -128,7 +130,7 @@ print STDERR
 mainop("generating I/O labels...", sub { $iolabs = $lts->gfsmLabels(); });
 
 ##-- generate automaton
-mainop("generating FST...\n",
+mainop(("generating ".($lts->{deterministic} ? "deterministic" : "non-deterministic weighted")." FST...\n"),
        sub { $fst = $lts->gfsmTransducer(ilabels=>$iolabs,olabels=>$iolabs); },
        "$0: FST generated.\n",
       );
@@ -170,7 +172,8 @@ lts2fst.perl - convert a Lingua::LTS ruleset to an AT&T text transducer
   -weight-rule  =WEIGHT  # weight for rule applications (default=0)
   -weight-keep  =WEIGHT  # weight for declared 'keep' symbols (default=0)
   -weight-norule=WEIGHT  # weight when no rules are applicable (default=0)
-  -non-deterministic     # create non-deterministic weighted output (default=no)
+  -deterministic         # create input-deterministic map transducer (default)
+  -non-deterministic     # create non-deterministic weighted transducer
 
  Output:
   -output  TFSTFILE
