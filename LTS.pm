@@ -17,7 +17,7 @@ use Carp;
 ## Constants
 ##==============================================================================
 
-our $VERSION = 0.06;
+our $VERSION = 0.07;
 
 ##-- always specials
 our @SPECIALS = ('#');
@@ -51,6 +51,7 @@ our %VERBOSE = (
 ##     phones  => \%phones,       ##-- pseudo-set: req: expand_alphabet()
 ##     specials => \%specials,    ##-- pseudo-set: req: expand_alphabet()
 ##     keep     => \%keepers,     ##-- pseudo-set: req: expand_alphabet() [for fst generation]
+##     epsilon  => $epsilon_str,  ##-- default = <epsilon>
 ##     ##
 ##     ##-- Options
 ##     deterministic => $bool,    ##-- default=1; if false non-deterministic weighted FST will be output
@@ -80,6 +81,7 @@ sub new {
 		phones0=>{},
 		keep0=>{},
 		specials0=>{},
+		epsilon=>'<epsilon>',
 
 		##-- flags
 		apply_verbose=>0,
@@ -327,11 +329,13 @@ sub print_symbols_lines {
 sub symbols_lines {
   my ($lts,$class,$syms) = @_;
   my @lines = qw();
-  my ($line);
+  my ($line,$sym);
   while (@$syms) {
     $line = "$class\t";
     while (@$syms && length($line) + length($syms->[0]) < 80) {
-      $line .= ' '.shift(@$syms);
+      $sym = shift(@$syms);
+      next if ($sym eq $lts->{epsilon}); ##-- skip epsilons
+      $line .= ' '.$sym;
     }
     push(@lines,$line."\n");
   }
@@ -398,7 +402,7 @@ sub _acpm_joinout {
 sub gfsmLabels {
   my $lts = shift;
   my $labs = Gfsm::Alphabet->new;
-  $labs->insert($_) foreach ('<epsilon>', map { sort keys %$_ } @$lts{qw(specials keep letters phones)});
+  $labs->insert($_) foreach ($lts->{epsilon}, grep {$_ ne $lts->{epsilon}} map {sort keys %$_} @$lts{qw(specials keep letters phones)});
   return $labs;
 }
 
@@ -441,10 +445,10 @@ sub gfsmTransducer {
 
   ##-- LHS: alphabets
   my $ilabs = $args{ilabels} ? $args{ilabels} : Gfsm::Alphabet->new();
-  $ilabs->insert('<epsilon>', 0) if (!defined($ilabs->find_key(0)));
+  $ilabs->insert($lts->{epsilon}, 0) if (!defined($ilabs->find_key(0)));
 
   my $sharedlabs = Gfsm::Alphabet->new();
-  $sharedlabs->insert('<epsilon>', 0);
+  $sharedlabs->insert($lts->{epsilon}, 0);
 
   ##-- LHS: construct fst
   $lts->vmsg0('progress', ', FST');
@@ -482,6 +486,7 @@ sub gfsmTransducer {
   }
   $lts->vmsg0('progress', "): done.\n");
 
+
   ##----------------------------
   ## IN+RHS
 
@@ -502,8 +507,12 @@ sub gfsmTransducer {
   $racpm->packout(packas=>'S', packadd=>0);
 
   ##-- IN+RHS: alphabets
+  my $ilabs_dbg      = $ilabs;
+  my $sharedlabs_dbg = $lts->sharedStringAlphabet($ilabs,$sharedlabs); ##-- debug: shared ($lfst,$rrfst) alphabet
+  my $rullabs_dbg    = $lts->ruleStringAlphabet(1);                    ##-- debug: shared ($rrfst,$filter) alphabet
+
   my $rullabs = Gfsm::Alphabet->new();
-  $rullabs->insert('<epsilon>', 0);
+  $rullabs->insert($lts->{epsilon}, 0);
   $rullabs->insert($lts->{rules}[$_], $_+1) foreach (0..$#{$lts->{rules}});
   $rullabs->insert({lhs=>[],rhs=>[],in=>[],out=>[],cost=>0,id=>$norulid}, $norulid+1);    ##-- <norule>
   my $nrullabs_ids = $rullabs->size;
@@ -592,8 +601,10 @@ sub gfsmTransducer {
   ##-- output filter: labels
   $lts->vmsg('progress', "Output Filter: (labels");
   my $folabs = $args{olabels} ? $args{olabels} : Gfsm::Alphabet->new();
-  $folabs->insert('<epsilon>',0) if (!defined($folabs->find_key(0)));
+  $folabs->insert($lts->{epsilon},0) if (!defined($folabs->find_key(0)));
   $folabs->insert($_) foreach (sort(keys(%{$lts->{phones}})));
+
+  my $olabs_dbg = $folabs; ##-- debug: filter output labels
 
   ##-- output filter: fst
   $lts->vmsg0('progress', ', FST');
@@ -1064,6 +1075,58 @@ sub rule2strNS {
 	      @{$rule->{out}},
 	      ')',
 	     );
+}
+
+## $str = $lts->ruleIdToString($ruleid,$offset)
+sub ruleIdToString {
+  my ($lts,$id,$offset) = @_;
+  my $rule = $lts->{rules}[$id];
+  my $rid = $id+(defined($offset) ? $offset : 0);
+  if (!defined($rule)) { return "($rid:<noRule>)"; }
+  return join('',
+	      ("(",
+	       $rid,
+	       ":",
+	       @{$rule->{lhs}},
+	       '[',
+	       @{$rule->{in}},
+	       ']',
+	       @{$rule->{rhs}},
+	       '=',
+	       @{$rule->{out}},
+	       ')',
+	      ));
+}
+
+## $alphabet = $lts->ruleStringAlphabet($id_offset=0)
+##  + debugging input alphabet for $lts->gfsmTransducer() FST $lfst
+sub ruleStringAlphabet {
+  my ($lts,$offset) = @_;
+  $offset = 0 if (!defined($offset));
+  my $abet = Gfsm::Alphabet->new->fromArray([('<epsRule>'),
+					     (map { $lts->ruleIdToString($_,$offset) } (0..$#{$lts->{rules}})),
+					     ('<noRule>'),
+					    ]);
+  return $abet;
+}
+
+## $abet = $lts->sharedStringAlphabet($ilabs,$sharedlabs)
+##  + debugging shared alphbet for $lts->gfsmTransducer() FSTs ($lfst,$rfst)
+sub sharedStringAlphabet {
+  my ($lts,$ilabs,$sharedlabs) = @_;
+  my $ilabs_a  = $ilabs->asArray;
+  my $shared_a = $sharedlabs->asArray;
+  my ($id, $ilab,$isym, @rulids,@rulstrs);
+  my $abet = Gfsm::Alphabet->new->fromArray(['(0:<epsShared>)',
+					     (map {
+					       $id = $_;
+					       ($ilab,@rulids) = unpack('S*', $shared_a->[$id]);
+					       $isym = $ilabs_a->[$ilab];
+					       @rulstrs = map {$lts->ruleIdToString($_)} @rulids;
+					       "($id: $ilabs_a->[$ilab], {".join(', ', @rulstrs)."})"
+					     } (1..$#$shared_a)),
+					    ]);
+  return $abet;
 }
 
 

@@ -9,6 +9,7 @@ Grimm
 *.lab
 *.scl
 *.afst
+*.gfsc
 *.gfst
 *.tfst
 *.dot

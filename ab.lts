@@ -1,0 +1,11 @@
+phon		A B
+
+class *		a b
+
+ [ a ] = A <0>
+ [ a ] =  <1>
+ [ <epsilon> ] = A <1>
+
+ [ b ] = B <0>
+ [ b ] =  <1>
+ [ <epsilon> ] = B <1>
