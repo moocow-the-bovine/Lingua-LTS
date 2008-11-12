@@ -63,9 +63,9 @@ pod2usage({-exitval=>0, -verbose=>0}) if ($help);
 
 sub setOutputDefaults {
   $oLetter = 'ltsLetter';
-  $ophon   = 'ltsPhon';
-  $ospecial = 'ltsSpecial';
-  $okeep = 'ltsKeep';
+  $oPhon   = 'ltsPhon';
+  $oSpecial = 'ltsSpecial';
+  $oKeep = 'ltsKeep';
   $oClassPrefix = 'ltsClass';
 }
 
