@@ -51,6 +51,7 @@ GetOptions(##-- General
 	   'ospecial|oS=s'=> \$oSpecial,
 	   'okeep|ok=s'   => \$oKeep,
 	   'oclass-prefix|oclass|oprefix|oc=s' => \$oClassPrefix,
+	   'odefaults|od' => \&setOutputDefaults,
 	   'osymbols|output|o=s'               => \$outfile,
 
 	   ##-- behavior
@@ -60,6 +61,13 @@ GetOptions(##-- General
 
 pod2usage({-exitval=>0, -verbose=>0}) if ($help);
 
+sub setOutputDefaults {
+  $oLetter = 'ltsLetter';
+  $ophon   = 'ltsPhon';
+  $ospecial = 'ltsSpecial';
+  $okeep = 'ltsKeep';
+  $oClassPrefix = 'ltsClass';
+}
 
 ##==============================================================================
 ## Subs
@@ -153,6 +161,7 @@ lts2sym.perl - convert a Lingua::LTS ruleset to an AT&T symbols file
   -ospecial      CLASSNAME
   -okeep         CLASSNAME
   -oclass-prefix LTS_CLASS_PREFIX
+  -odefaults                       # use default names ltsLetter etc.
 
 
 =cut
