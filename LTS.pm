@@ -191,7 +191,7 @@ sub load {
 	   });
     }
     else {
-      warn(__PACKAGE__, "::load(): could not parse line '$_' -- ignoring\n");
+      warn(__PACKAGE__, "::load(): could not parse line number ", $fh->input_line_number, ": '$_' -- ignoring\n");
     }
   }
 
