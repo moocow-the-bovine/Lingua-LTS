@@ -1,0 +1,75 @@
+=pod
+
+README for Lingua::LTS
+
+=head1 ABSTRACT
+
+Lingua::LTS - compiler/interpreter for festival-style letter-to-sound rules
+
+=head1 REQUIREMENTS
+
+=over 4
+
+=item Gfsm
+
+=item Encode
+
+=item Storable
+
+=item Tie::Cache
+
+=item Getopt::Long
+
+=item Pod::Usage
+
+=item Tiem::HiRes
+
+=item (an LTS ruleset)
+
+=back
+
+
+=head1 DESCRIPTION
+
+The Lingua::LTS package provides an object-oriented compiler/interpreter for
+deterministic letter-to-sound rules with festival-like syntax and semantics
+(see papers and links below for details).
+
+
+=head1 SEE ALSO
+
+=over 4
+
+=item *
+
+A. Black and P. Taylor, "Festival Speech Synthesis System".
+Technical Report HCRC/TR-83,
+University of Edinburgh, Centre for Speech Technology Research,
+1997.
+
+URL: http://www.cstr.ed.ac.uk/projects/festival
+
+
+=item *
+
+G. Möhler, A. Schweitzer, and Mark Breitenbücher,
+"{IMS} {G}erman {F}estival Manual, version 1.2".
+Institut für Maschinelle Sprachverarbeitung, Universität Stuttgart,
+17 July, 2001.
+
+URL: http://www.ims.uni-stuttgart.de/phonetik/synthesis
+
+
+=item Gfsm(3perl)
+
+URL: http://www.ling.uni-potsdam.de/~moocow/projects/gfsm
+
+=back
+
+
+
+=head1 AUTHOR
+
+Bryan Jurish E<lt>moocow@bbaw.deE<gt>
+
+=cut
