@@ -22,7 +22,7 @@ Lingua::LTS - compiler/interpreter for festival-style letter-to-sound rules
 
 =item Pod::Usage
 
-=item Tiem::HiRes
+=item Time::HiRes
 
 =item (an LTS ruleset)
 
