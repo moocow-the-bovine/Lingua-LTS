@@ -82,7 +82,7 @@ sub analyze {
   my @analyses = $gfsm->analyze($word);
   print
     (map { defined($outputEnc) ? encode($outputEnc,$_) : $_ }
-     map { " $w : $_\n" }
+     map { "\t$w : $_\n" }
      @analyses
     );
 }
