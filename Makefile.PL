@@ -23,6 +23,7 @@ WriteMakefile
 
    EXE_FILES    => [qw(lts2fst.perl lts2sym.perl),
 		    qw(lts-apply.perl lts-info.perl),
+		    qw(lts-lookup-shell.perl),
 		   ],
   );
 
