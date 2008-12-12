@@ -107,7 +107,7 @@ print STDERR
    "  lab          : $labFile\n",
    "  dict         : ", ($dictFile||'(none)'), "\n",
    " ENCODING OPTIONS:\n",
-   "  labEnc       : '$gfsm->{labenc}'\n",
+   "  labEnc       : $gfsm->{labenc}\n",
    "  inputEnc     : $inputEnc\n",
    "  outputEnc    : $outputEnc\n",
    " FST OPTIONS:\n",
