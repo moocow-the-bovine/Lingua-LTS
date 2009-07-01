@@ -4,8 +4,10 @@ class *		a b
 
  [ a ] = A <0>
 ;; [ a ] =   <1>
- [ <epsilon> ] a = A <1>
+;; [ EPS ] a = A <1>
+ [ EPS ] a = A <1>
 
  [ b ] = B <0>
 ;; [ b ] =  <1>
- [ <epsilon> ] b = B <1>
+;; [ <epsilon> ] b = B <1>
+ [ EPS ] b = B <1>

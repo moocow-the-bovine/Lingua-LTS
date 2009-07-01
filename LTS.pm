@@ -149,7 +149,7 @@ sub load {
   my $fh = ref($file) ? $file : IO::File->new("<$file");
   croak(__PACKAGE__, "::load(): open failed for '$file': $!") if (!$fh);
 
-  my ($cname,@cchars, $lhs,$in,$rhs,$out,$cost);
+  my ($cname,@cchars, $lhs,$in,$rhs,$out,$cost, $rule);
   while (<$fh>) {
     chomp;
     s/(?<!\\)\;.*//g;   ##-- ignore comments
@@ -179,16 +179,17 @@ sub load {
     }
     elsif (/^\s*([^\[]*)\[([^\]]*)\]([^\=]*)=([^\<]*)(?:\<([^\>]*)\>)?\s*$/) {
       ($lhs,$in,$rhs,$out,$cost) = ($1,$2,$3,$4,$5);
-      push(@{$lts->{rules}},
-	   {
-	    id=>scalar(@{$lts->{rules}}),
-	    lhs=>[grep { defined($_) && $_ ne '' } split(/\s+/,$lhs)],
-	    in=>[grep { defined($_) && $_ ne '' } split(/\s+/,$in)],
-	    rhs=>[grep { defined($_) && $_ ne '' } split(/\s+/,$rhs)],
-	    #out=>[map { "=$_" } grep { defined($_) && $_ ne '' } split(/\s+/,$out)],
-	    out=>[map { "$_" } grep { defined($_) && $_ ne '' } split(/\s+/,$out)],
-	    cost=>(defined($cost) ? $cost : $lts->{weight_rule}),
-	   });
+      $rule = {
+	       id=>scalar(@{$lts->{rules}}),
+	       lhs=>[grep { defined($_) && $_ ne '' } split(/\s+/,$lhs)],
+	       in=>[grep { defined($_) && $_ ne '' } split(/\s+/,$in)],
+	       rhs=>[grep { defined($_) && $_ ne '' } split(/\s+/,$rhs)],
+	       #out=>[map { "=$_" } grep { defined($_) && $_ ne '' } split(/\s+/,$out)],
+	       out=>[map { "$_" } grep { defined($_) && $_ ne '' } split(/\s+/,$out)],
+	       cost=>(defined($cost) ? $cost : $lts->{weight_rule}),
+	      };
+      #@{$rule->{in}} = $lts->{epsilon} if (!@{$rule->{in}});
+      push(@{$lts->{rules}},$rule);
     }
     else {
       warn(__PACKAGE__, "::load(): could not parse line number ", $fh->input_line_number, ": '$_' -- ignoring\n");
