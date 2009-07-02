@@ -23,6 +23,7 @@ our $isymfile = undef;
 our (@symLetters,@symPhons,@symSpecials,@symKeep);
 
 our $verbose = 1;
+our $version = 0;
 
 our $oLetter = undef;
 our $oPhon   = undef;
@@ -34,6 +35,7 @@ our $oClassPrefix = undef;
 ##==============================================================================
 GetOptions(##-- General
 	   'help|h' => \$help,
+	   'version|V' => \$version,
 
 	   ##-- debugging
 	   'verbose|v' => \$verbose,
@@ -59,6 +61,10 @@ GetOptions(##-- General
 	   'eos|e!' => \$lts->{implicit_eos},
 	  );
 
+if ($version) {
+  print basename($0), ": Lingua::LTS v$Lingua::LTS::VERSION\n";
+  exit(0) if (!$help);
+}
 pod2usage({-exitval=>0, -verbose=>0}) if ($help);
 
 sub setOutputDefaults {

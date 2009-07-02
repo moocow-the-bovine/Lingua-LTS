@@ -23,6 +23,7 @@ our $outfile = '-';
 our $isymfile = undef;
 our (@symLetters,@symPhons,@symSpecials,@symKeep);
 
+our $version = 0; ##-- print version and exit?
 our $verbose = 1;
 
 ##==============================================================================
@@ -30,6 +31,7 @@ our $verbose = 1;
 ##==============================================================================
 GetOptions(##-- General
 	   'help|h' => \$help,
+	   'version|V' => \$version,
 
 	   ##-- debugging
 	   'verbose|v' => \$verbose,
@@ -55,6 +57,10 @@ GetOptions(##-- General
 	   'weight-keep|wk=f'       => \$lts->{weight_keep},
 	  );
 
+if ($version) {
+  print basename($0), ": Lingua::LTS v$Lingua::LTS::VERSION\n";
+  exit(0) if (!$help);
+}
 pod2usage({-exitval=>0, -verbose=>0}) if ($help);
 
 
