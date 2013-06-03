@@ -3,16 +3,18 @@ MANIFEST
 MANIFEST.SKIP
 
 README.txt
-README.POD
+README.rpod
 
+lts2fst.perl
+lts2sym.perl
 lts-apply.perl
 lts-info.perl
-lts2sym.perl
-lts2fst.perl
+lts-lookup-shell.perl
 
 LTS.pm
 LTS/ACPM.pm
 LTS/Gfsm.pm
+LTS/Gfsm/Cascade.pm
 LTS/Trie.pm
 
 t/00_basic.t
