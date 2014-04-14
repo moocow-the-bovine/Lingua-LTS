@@ -1,0 +1,53 @@
+;; -*- Mode: Scheme; coding: utf-8; -*-
+;;
+;; File: vnd.lts
+;; Description:
+;;   + rudimentary non-deterministic Lingua::LTS file
+;; Notes:
+;;   + compile with lts2fst.perl "--non-deterministic" flag!
+
+;;;---------------------------------------------------------------------
+;;; Special pseudo-characters (passed through by default rules)
+;;;  + Syntax: special CHARS...
+special #
+
+;;;---------------------------------------------------------------------
+;;; Keepers (passed through, bypassing LTS rules)
+;;;  + Syntax: keep CHARS...
+
+;keep  . ~ ! $ % & + , / : \; \< \= \> ? · | § ¬ \*
+;keep  ( ) [ ] { }
+;keep	- _ .
+;keep  \" ` ´ » «
+;;keep \'
+;keep  ¹ ² ³ ¼ ½ ¾
+
+;;;---------------------------------------------------------------------
+;;; Character Classes
+;;;  + Syntax: class NAME CHARS...
+;;;  + can be used in rule contexts
+
+;class *        a b c d e f g h i j k l m n o p q r s t u v w x y z ä ö ü ß \'
+;class V	       a       e       i           o           u           ä ö ü
+;class NotV       b c d   f g h   j k l m n   p q r s t   v w x y z       ß    #
+
+;;;---------------------------------------------------------------------
+;;; Rules
+;;;  + all rules are of the form:
+;;;      $LEFT [ $IN ] $RIGHT = $OUT <$COST>
+;;;    where:
+;;;      $LEFT , $RIGHT : left- rsp. right-context (symbol strings, space-separated)
+;;;      $IN            : input symbol(s)
+;;;      $OUT           : output symbol(s)
+;;;      $COST          : optional cost (float)
+;;;      [ ] = < >      : literals
+;;;  + analagous to Mohri&Sproat notation $IN -> $OUT / $LEFT __ $RIGHT <$COST>
+
+ # [ v ] n d # = u <1>		;;-- vnd->und
+ # [ v ] n     = u <2> 		;;-- vnter->unter
+   [ v ]       = u <3>		;;-- nvn->nun
+
+ [ v ] = v <0>
+ [ u ] = u <0>
+ [ n ] = n <0> 
+ [ d ] = d <0>
