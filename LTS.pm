@@ -17,7 +17,7 @@ use Carp;
 ## Constants
 ##==============================================================================
 
-our $VERSION = 0.07;
+our $VERSION = 0.08;
 
 ##-- always specials
 our @SPECIALS = ('#');
@@ -670,10 +670,15 @@ sub gfsmTransducer {
 
   $lts->vmsg0('progress', ', LHS @ RHS');
   my $cfst = $lfst->compose($rrfst);
+  $lts->vmsg0('progress', ' [c]');
+  $cfst->_connect();
 
   $lts->vmsg0('progress', ' @ filter');
   $cfst->arcsort(Gfsm::ASMUpper());
   my $fcfst = $cfst->compose($filter);
+  $lts->vmsg0('progress', ' [c]');
+  $fcfst->_connect();
+
   $fcfst->arcsort(Gfsm::ASMLower());
   $lts->vmsg0('progress', "): done.\n");
 

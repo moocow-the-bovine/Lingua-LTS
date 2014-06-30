@@ -1,13 +1,17 @@
 phon		A B
-
 class *		a b
 
  [ a ] = A <0>
 ;; [ a ] =   <1>
 ;; [ EPS ] a = A <1>
- [ EPS ] a = A <1>
+;; [ EPS ] a = A <1>
+;; [ a b ] = B A <1>
 
- [ b ] = B <0>
-;; [ b ] =  <1>
+   [ a ] b = B <1>
+ a [ b ] = A <1>
+
+   [ b ] = B <0>
+ a [ b ] =   <2>
+;; [ b ] =   <1>
 ;; [ <epsilon> ] b = B <1>
- [ EPS ] b = B <1>
+;; [ EPS ] b = B <1>
