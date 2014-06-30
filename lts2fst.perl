@@ -19,6 +19,7 @@ use Gfsm;
 ##   $lts = { classes=>\%classes, rules=>\@rules, ... }
 our $lts = Lingua::LTS->new();
 
+our $gfsmout = 0;
 our $outfile = '-';
 our $isymfile = undef;
 our (@symLetters,@symPhons,@symSpecials,@symKeep);
@@ -44,6 +45,7 @@ GetOptions(##-- General
 	   'ikeep|ik=s@'   => \@symKeep,
 
 	   ##-- Output
+	   'gfsm|g!'		 => \$gfsmout,
 	   'output|o|F=s'        => \$outfile,
 
 	   ##-- behavior
@@ -140,12 +142,20 @@ mainop(("generating ".($lts->{deterministic} ? "deterministic" : "non-determinis
        sub { $fst = $lts->gfsmTransducer(ilabels=>$iolabs,olabels=>$iolabs); },
        "$0: FST generated.\n",
       );
+if ($verbose) {
+  print STDERR "$0: ", $fst->n_states, " state(s), ", $fst->n_arcs, " arc(s)\n";
+}
 
-##-- save tfst
-mainop("saving AT&T automaton text file '$outfile'...",
-       sub {
-	 $fst->print_att($outfile, lower=>$iolabs, upper=>$iolabs);
-       });
+##-- save
+mainop("saving ".($gfsmout ? "GFSM" : "AT&T-compatible text")." automaton file '$outfile'...",
+	 sub {
+	   if ($gfsmout) {
+	     $fst->save($outfile);
+	     $iolabs->save("$outfile.lab") if ($outfile ne '-');
+	   } else {
+	     $fst->print_att($outfile, lower=>$iolabs, upper=>$iolabs);
+	   }
+	 });
 
 
 __END__
@@ -181,8 +191,9 @@ lts2fst.perl - convert a Lingua::LTS ruleset to an AT&T text transducer
   -deterministic         # create input-deterministic map transducer (default)
   -non-deterministic     # create non-deterministic weighted transducer
 
- Output:
-  -output  TFSTFILE
+ I/O:
+  -[no]gfsm		 # do/don't save in gfsm binary format (default:don't)
+  -output  TFSTFILE	 # output file: gfsm binary or att-compatible text automaton
 
 =cut
 
