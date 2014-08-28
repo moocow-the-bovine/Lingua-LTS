@@ -17,7 +17,7 @@ use Carp;
 ## Constants
 ##==============================================================================
 
-our $VERSION = 0.08;
+our $VERSION = 0.09;
 
 ##-- always specials
 our @SPECIALS = ('#');
@@ -55,6 +55,7 @@ our %VERBOSE = (
 ##     ##
 ##     ##-- Options
 ##     deterministic => $bool,    ##-- default=1; if false non-deterministic weighted FST will be output
+##     compact => $bool,          ##-- default=0; implicitly compact (intermediate) automata, if supported?
 ##     implicit_bos => $bool,     ##-- default=1
 ##     implicit_eos => $bool,     ##-- default=1
 ##     weight_rule   => $weight,  ##-- default=0
@@ -90,7 +91,8 @@ sub new {
 		implicit_eos=>1,
 		verbose=>$VERBOSE{default},
 		##
-		##-- weight options
+		##-- fst and weight options
+		compact       =>1,
 		deterministic =>1,
 		weight_rule   =>0,
 		weight_keep   =>0,
@@ -485,6 +487,14 @@ sub gfsmTransducer {
       $lfst->add_arc($q,$q, $lo,$hi, 0);
     }
   }
+
+  ##-- LHS: compact
+  if ($lts->{compact} && $lfst->can('_compact')) {
+    $lts->vmsg0('progress', ', compact');
+    $lfst->_compact();
+  }
+
+  ##-- LHS: done
   $lts->vmsg0('progress', "): done.\n");
 
 
@@ -594,6 +604,14 @@ sub gfsmTransducer {
   ##-- RHS: reverse
   $lts->vmsg0('progress', ', reverse');
   my $rrfst = $rfst->reverse;
+
+  ##-- RHS: compact
+  if ($lts->{compact} && $rrfst->can('_compact')) {
+    $lts->vmsg0('progress', ', compact');
+    $rrfst->_compact();
+  }
+
+  ##-- RHS: done
   $lts->vmsg0('progress', "): done.\n");
 
   ##-------------------------
@@ -658,6 +676,14 @@ sub gfsmTransducer {
       $filter->add_arc($q,$q, $lo,$hi, ($lts->{weight_keep}||0) );
     }
   }
+
+  ##-- Filter: compact
+  if ($lts->{compact} && $filter->can('_compact')) {
+    $lts->vmsg0('progress', ', compact');
+    $filter->_compact();
+  }
+
+  ##-- Filter: done
   $lts->vmsg0('progress', "): done.\n");
 
   ##-------------------------
@@ -672,12 +698,14 @@ sub gfsmTransducer {
   my $cfst = $lfst->compose($rrfst);
   $lts->vmsg0('progress', ' [c]');
   $cfst->_connect();
+  $cfst->_compact() if ($cfst->can('_compact') && $lts->{compact});
 
   $lts->vmsg0('progress', ' @ filter');
   $cfst->arcsort(Gfsm::ASMUpper());
   my $fcfst = $cfst->compose($filter);
   $lts->vmsg0('progress', ' [c]');
   $fcfst->_connect();
+  $fcfst->_compact() if ($fcfst->can('_compact') && $lts->{compact});
 
   $fcfst->arcsort(Gfsm::ASMLower());
   $lts->vmsg0('progress', "): done.\n");

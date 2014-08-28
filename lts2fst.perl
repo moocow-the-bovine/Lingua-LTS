@@ -49,6 +49,7 @@ GetOptions(##-- General
 	   'output|o|F=s'        => \$outfile,
 
 	   ##-- behavior
+	   'compact|c!' => \$lts->{compact},
 	   'deterministic|det|d!' => \$lts->{deterministic},
 	   'non-deterministic|nondet|weighted|w|nd' => sub { $lts->{deterministic}=0; },
 	   #'non-deterministic|nd' => sub { $lts = bless($lts,'Lingua::LTS::Nd'); },
@@ -138,7 +139,8 @@ print STDERR
 mainop("generating I/O labels...", sub { $iolabs = $lts->gfsmLabels(); });
 
 ##-- generate automaton
-mainop(("generating ".($lts->{deterministic} ? "deterministic" : "non-deterministic weighted")." FST...\n"),
+$lts->{compact}=0 if (!Gfsm::Automaton->can('_compact'));
+mainop(("generating ".($lts->{deterministic} ? "deterministic" : "non-deterministic weighted").($lts->{compact} ? ", compact" : ", non-compact")." FST...\n"),
        sub { $fst = $lts->gfsmTransducer(ilabels=>$iolabs,olabels=>$iolabs); },
        "$0: FST generated.\n",
       );
@@ -190,6 +192,7 @@ lts2fst.perl - convert a Lingua::LTS ruleset to an AT&T text transducer
   -weight-norule=WEIGHT  # weight when no rules are applicable (default=0)
   -deterministic         # create input-deterministic map transducer (default)
   -non-deterministic     # create non-deterministic weighted transducer
+  -compact , -nocompact  # do/don't implicitly compact automaton if supported
 
  I/O:
   -[no]gfsm		 # do/don't save in gfsm binary format (default:don't)
