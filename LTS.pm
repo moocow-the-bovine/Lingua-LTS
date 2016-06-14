@@ -10,6 +10,8 @@ use Lingua::LTS::Trie;
 use Lingua::LTS::ACPM;
 use strict;
 
+require 5.10.0; ##-- for // operator
+
 use IO::File;
 use Carp;
 
@@ -17,7 +19,7 @@ use Carp;
 ## Constants
 ##==============================================================================
 
-our $VERSION = 0.09;
+our $VERSION = 0.10;
 
 ##-- always specials
 our @SPECIALS = ('#');
@@ -460,13 +462,14 @@ sub gfsmTransducer {
   $lfst->is_transducer(1);
   #$lfst->is_weighted(0);
   $lfst->root(0);
-  my ($q,$qto,$gotoq,$c,$qoutp,$lo,$hi);
+  my ($q,$qto,$gotoq,$c,$qoutp,$lo,$hisym,$hi);
   foreach $q (0..($lacpm->{nq}-1)) {
     $gotoq = $lacpm->{goto}[$q];
     ##-- add arcs
     while (($c,$qto)=each(%$gotoq)) {
       $lo = $ilabs->get_label($c);
-      $hi = $sharedlabs->get_label(pack('S', $lo).$lacpm->{out}{$q});
+      $hisym = pack('S', $lo).($lacpm->{out}{$q}//''); ##-- avoid bogus "uninitialized value in subroutine entry" warnings from next call
+      $hi    = $sharedlabs->get_label($hisym);
       $lfst->add_arc($q,$qto, $lo,$hi, 0);
     }
     ##-- check for state finality
@@ -476,7 +479,11 @@ sub gfsmTransducer {
   ##-- LHS: norule
   $lts->vmsg0('progress', ', norule');
   my $norulid = scalar(@{$lts->{rules}});
-  $sharedlabs->insert(pack('SS', $_, $norulid)) foreach (1..($ilabs->size-1));
+  my ($sharedsym);
+  foreach (1..($ilabs->size-1)) {
+    $sharedsym = pack('SS', $_, $norulid);	##-- avoid bogus "uninitialized value in subroutine entry" warnings from next call
+    $sharedlabs->insert($sharedsym);
+  }
 
   ##-- LHS: keepers: arcs (q --a:a--> q) for q \in Q_{LHS}, c \in %keep
   my $nshared_packed = $sharedlabs->size;
@@ -527,8 +534,11 @@ sub gfsmTransducer {
   $rullabs->insert($lts->{rules}[$_], $_+1) foreach (0..$#{$lts->{rules}});
   $rullabs->insert({lhs=>[],rhs=>[],in=>[],out=>[],cost=>0,id=>$norulid}, $norulid+1);    ##-- <norule>
   my $nrullabs_ids = $rullabs->size;
-  ##-- <keep=STR>
-  $rullabs->insert("<keep=$_>") foreach (sort(keys(%{$lts->{keep}})));
+  my ($keepsym);
+  foreach (sort(keys(%{$lts->{keep}}))) {
+    $keepsym = "<keep=$_>";	##-- avoid bogus "uninitialized value in subroutine entry" warnings from next call
+    $rullabs->insert($keepsym);	##-- <keep=STR>
+  }
 
   ##-- IN+RHS: indexing
   $lts->vmsg0('progress', ', index');
