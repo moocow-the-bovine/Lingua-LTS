@@ -38,7 +38,7 @@ our $encoding = 'raw';
 GetOptions(##-- General
 	   'help|h' => \$help,
 	   'version|V' => \$version,
-	   'encoding|e=s' => \$encoding,
+	   'encoding|E=s' => \$encoding,
 
 	   ##-- debugging
 	   'verbose|v' => \$verbose,
