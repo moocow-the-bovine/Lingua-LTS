@@ -26,6 +26,7 @@ our (@symLetters,@symPhons,@symSpecials,@symKeep);
 
 our $version = 0; ##-- print version and exit?
 our $verbose = 1;
+our $encoding = 'raw';
 
 ##==============================================================================
 ## Command-line
@@ -33,6 +34,7 @@ our $verbose = 1;
 GetOptions(##-- General
 	   'help|h' => \$help,
 	   'version|V' => \$version,
+	   'encoding|e=s' => \$encoding,
 
 	   ##-- debugging
 	   'verbose|v' => \$verbose,
@@ -87,12 +89,13 @@ sub mainop {
 
 push(@ARGV,'-') if (!@ARGV);
 $lts_file = shift;
-mainop("loading LTS file '$lts_file'...", sub { $lts->load($lts_file) });
+mainop("loading LTS file '$lts_file'...", sub { $lts->load($lts_file, encoding=>$encoding) });
 
 ##-- load symbols file (if given)
 mainop("loading symbols file '$isymfile'...",
        sub {
 	 $lts->load_symbols($isymfile,
+			    encoding => $encoding,
 			    Letter  => (@symLetters  ? \@symLetters  : undef),
 			    Phon    => (@symPhons    ? \@symPhons   : undef),
 			    Special => (@symSpecials ? \@symSpecials : undef),
@@ -177,6 +180,7 @@ lts2fst.perl - convert a Lingua::LTS ruleset to an AT&T text transducer
 
  Options:
   -help
+  -encoding ENCODING
 
  Input Symbols:
   -isymbols SYMFILE

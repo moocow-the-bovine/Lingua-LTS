@@ -30,12 +30,15 @@ our $oPhon   = undef;
 our $oSpecial = undef;
 our $oClassPrefix = undef;
 
+our $encoding = 'raw';
+
 ##==============================================================================
 ## Command-line
 ##==============================================================================
 GetOptions(##-- General
 	   'help|h' => \$help,
 	   'version|V' => \$version,
+	   'encoding|e=s' => \$encoding,
 
 	   ##-- debugging
 	   'verbose|v' => \$verbose,
@@ -95,12 +98,13 @@ sub mainop {
 
 push(@ARGV,'-') if (!@ARGV);
 $lts_file = shift;
-mainop("loading LTS file '$lts_file'...", sub { $lts->load($lts_file) });
+mainop("loading LTS file '$lts_file'...", sub { $lts->load($lts_file, encoding=>$encoding) });
 
 ##-- load symbols file (if given)
 mainop("loading symbols file '$isymfile'...",
        sub {
 	 $lts->load_symbols($isymfile,
+			    encoding => $encoding,
 			    Letter  => (@symLetters  ? \@symLetters  : undef),
 			    Phon    => (@symPhons    ? \@symPhons    : undef),
 			    Special => (@symSpecials ? \@symSpecials : undef),
@@ -126,6 +130,7 @@ print STDERR
 mainop("saving symbols file '$outfile'...",
        sub {
 	 $lts->save_symbols($outfile,
+			    encoding => $encoding,
 			    Letter => $oLetter,
 			    Phon   => $oPhon,
 			    Special=> $oSpecial,
@@ -152,6 +157,7 @@ lts2sym.perl - convert a Lingua::LTS ruleset to an AT&T symbols file
 
  Options:
   -help
+  -encoding      ENCODING
 
  Input:
   -isymbols      INPUT_SYMFILE

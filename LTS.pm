@@ -19,7 +19,7 @@ use Carp;
 ## Constants
 ##==============================================================================
 
-our $VERSION = 0.10;
+our $VERSION = 0.11;
 
 ##-- always specials
 our @SPECIALS = ('#');
@@ -131,7 +131,9 @@ sub vmsg0 {
 ##--------------------------------------------------------------
 ## Methods: I/O: Input: .lts
 
-## $obj = $CLASS_OR_OBJ->load($filename_or_fh)
+## $obj = $CLASS_OR_OBJ->load($filename_or_fh,%args)
+##  + %args:
+##    encoding => $encoding, ##-- file encoding
 ##  + File Syntax:
 ##    LTS_FILE ::= LTS_LINE*
 ##    LTS_LINE ::= ( BLANK | COMMENT | PHON | SPECIAL | KEEP | CLASS | IGNORE | RULE ) "\n"
@@ -147,11 +149,12 @@ sub vmsg0 {
 ##    RULE       ::= RULE_LHS "[" RULE_IN "]" RULE_RHS "=" RULE_OUT RULE_COST?
 ##    RULE_COST  ::= "<" (float) ">"
 sub load {
-  my ($lts,$file) = @_;
+  my ($lts,$file,%args) = @_;
   $lts = $lts->new() if (!ref($lts));
 
   my $fh = ref($file) ? $file : IO::File->new("<$file");
   croak(__PACKAGE__, "::load(): open failed for '$file': $!") if (!$fh);
+  binmode($fh, ":encoding($args{encoding})") if (($args{encoding}||"raw") ne "raw");
 
   my ($cname,@cchars, $lhs,$in,$rhs,$out,$cost, $rule);
   while (<$fh>) {
@@ -211,6 +214,7 @@ sub load {
 ##  + load AT&T-format symbols file
 ##  + populates keys: symLetters, symPhones, symSpecial, symLines
 ##  + %args
+##     encoding => $encoding,          ##-- file encoding
 ##     Letter  => \@letterClassNames,  ##-- default: ['LtsLetter']
 ##     Phon    => \@phonClassNames,    ##-- default: ['LtsPhon']
 ##     Special => \@specialClassNames, ##-- default: ['LtsSpecial']
@@ -221,6 +225,7 @@ sub load_symbols {
 
   my $fh = ref($file) ? $file : IO::File->new("<$file");
   croak(__PACKAGE__, "::load(): open failed for symbols file '$file': $!") if (!$fh);
+  binmode($fh, ":encoding($args{encoding})") if (($args{encoding}||"raw") ne "raw");
 
   my $cLetter  = $args{Letter}  ? $args{Letter}   : 'LtsLetter';
   my $cPhon    = $args{Phon}    ? $args{Phon}     : 'LtsPhon';
@@ -262,6 +267,7 @@ sub load_symbols {
 ## $lts = $lts->save_symbols($symbols_filename_or_fh,%args)
 ##  + requires: lts_expaned_alphabet()
 ##  + %args:
+##      encoding => $encoding,    ##-- file encoding
 ##      Letter   => $LetterName,  ##-- symbol class name (default='LtsLetter')
 ##      Phon     => $PhonName,    ##-- symbol class name (default='LtsPhon')
 ##      Special  => $SpecialName  ##-- symbol class name (default='LtsSpecial')
@@ -272,6 +278,7 @@ sub save_symbols {
 
   my $fh = ref($file) ? $file : IO::File->new(">$file");
   croak(__PACKAGE__, "::save_symbols(): open failed for '$file': $!") if (!$fh);
+  binmode($fh, ":encoding($args{encoding})") if (($args{encoding}||"raw") ne "raw");
 
   ##-- print cached symbols-file lines, if any
   $fh->print( (map { ($_,"\n") } @{$lts->{symLines}}), "\n") if ($lts->{symLines});
